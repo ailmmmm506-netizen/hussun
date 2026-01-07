@@ -3,19 +3,25 @@ import numpy as np
 import pandas as pd
 import time
 
-# --- إعداد الصفحة ---
-st.set_page_config(page_title="المطور العقاري - النسخة الاحترافية", layout="wide", page_icon="🏢")
+# --- إعداد الصفحة (Page Config) ---
+st.set_page_config(
+    page_title="المطور العقاري برو | Real Estate Pro",
+    layout="wide",
+    page_icon="🏙️",
+    initial_sidebar_state="expanded"
+)
 
-# --- التنسيق (CSS) ---
+# --- التنسيق المخصص (CSS Styling) ---
 st.markdown("""
 <style>
-    .big-font {font-size:20px !important; font-weight: bold;}
-    .success-box {padding: 20px; background-color: #d4edda; border-radius: 10px; border: 1px solid #c3e6cb; color: #155724;}
-    .warning-box {padding: 20px; background-color: #fff3cd; border-radius: 10px; border: 1px solid #ffeeba; color: #856404;}
+    .main {background-color: #f8f9fa;}
+    .stMetric {background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);}
+    .big-font {font-size:18px !important; color: #333;}
+    .header-style {color: #1f77b4;}
 </style>
 """, unsafe_allow_html=True)
 
-# --- كلاس التحليل ---
+# --- المحرك الحسابي (Calculation Engine) ---
 class FeasibilityEngine:
     def __init__(self, area, price, const_cost, margin, floors, efficiency):
         self.area = area
@@ -26,21 +32,22 @@ class FeasibilityEngine:
         self.efficiency = efficiency / 100
 
     def calculate(self, avg_market_land=None, avg_sell_price=None):
-        # إذا لم يدخل المستخدم أسعار سوق، نستخدم المحاكاة
+        # محاكاة البيانات في حال عدم الإدخال اليدوي
         if avg_market_land is None:
             avg_market_land = self.price * np.random.uniform(0.95, 1.05)
         
         if avg_sell_price is None:
-            # معادلة تقريبية: سعر البيع = (سعر الأرض/الكفاءة) + البناء + 30% ربح مطور
-            avg_sell_price = (avg_market_land / 2.0) + self.const_cost + 1500
+            # معادلة تقديرية: (سعر الأرض/2) + تكلفة البناء + 2500 هامش وتسويق
+            avg_sell_price = (avg_market_land / 2.0) + self.const_cost + 2500
 
         # الحسابات الأساسية
         total_land_cost = self.area * self.price
-        total_bua = self.area * self.floors # إجمالي مسطحات البناء
-        net_sellable = total_bua * self.efficiency # الصافي للبيع
+        total_bua = self.area * self.floors
+        net_sellable = total_bua * self.efficiency
         
         total_const_cost = total_bua * self.const_cost
-        soft_costs = (total_land_cost + total_const_cost) * 0.12 # 12% مصاريف إدارية وتسويق
+        # المصاريف الإدارية والتسويقية (Soft Costs)
+        soft_costs = (total_land_cost + total_const_cost) * 0.12 
         
         total_project_cost = total_land_cost + total_const_cost + soft_costs
         expected_revenue = net_sellable * avg_sell_price
@@ -48,15 +55,13 @@ class FeasibilityEngine:
         net_profit = expected_revenue - total_project_cost
         roi = (net_profit / total_project_cost) * 100
         
-        # السعر العادل للأرض لتحقيق الهامش المطلوب
-        # Revenue / (1+Margin) = Max Total Cost
-        # Max Land Cost = Max Total Cost - Const - Soft
+        # السعر العادل (Reverse Calculation)
         max_total_cost = expected_revenue / (1 + self.target_margin)
-        # تقريب المصاريف الإدارية كنسبة
         fair_land_total = (max_total_cost - total_const_cost) / 1.12
         fair_land_price_per_m = fair_land_total / self.area
 
         return {
+            "inputs": {"area": self.area, "price": self.price, "floors": self.floors},
             "market_land_avg": avg_market_land,
             "market_sell_avg": avg_sell_price,
             "total_dev_cost": total_project_cost,
@@ -68,131 +73,132 @@ class FeasibilityEngine:
             "sellable": net_sellable
         }
 
-# --- الواجهة (UI) ---
-st.title("🏢 نظام دراسة الجدوى العقارية المتكامل")
-st.markdown("---")
-
-# تقسيم الشاشة إلى تبويبات
-tab1, tab2, tab3 = st.tabs(["📝 المدخلات", "📊 التحليل والنتائج", "📑 التقرير النهائي"])
-
-with tab1:
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("1. بيانات الأرض والموقع")
-        location = st.text_input("اسم الحي / المدينة", "الرياض - حي النرجس")
-        area = st.number_input("مساحة الأرض (م2)", 800, step=50)
-        price = st.number_input("سعر المتر المعروض (ريال)", 3500, step=100)
-        floors = st.number_input("عدد الأدوار المسموحة (نظام البناء)", 3.0, step=0.5)
+    # ميزة جديدة: تحليل الحساسية
+    def sensitivity_analysis(self, base_results):
+        scenarios = []
+        # نقوم بتغيير تكلفة البناء وسعر البيع بنسبة -10% و +10%
+        variations = [-0.10, 0.0, 0.10] 
         
-    with col2:
-        st.subheader("2. فرضيات التطوير")
-        const_cost = st.number_input("تكلفة البناء المباشرة (ريال/م2)", 2000, help="عظم + تشطيب + إشراف")
-        efficiency = st.slider("كفاءة المساحة البيعية %", 70, 95, 80, help="كم نسبة الصافي من الإجمالي؟")
-        margin = st.slider("هامش الربح المستهدف %", 15, 50, 25)
+        base_sell_price = base_results['market_sell_avg']
+        base_const_cost = self.const_cost
+        
+        for v_sell in variations:
+            row = []
+            for v_const in variations:
+                # محاكاة سيناريو جديد
+                new_sell = base_sell_price * (1 + v_sell)
+                new_const = base_const_cost * (1 + v_const)
+                
+                # إعادة الحساب سريعاً
+                t_land = self.area * self.price
+                t_bua = self.area * self.floors
+                t_const = t_bua * new_const
+                t_soft = (t_land + t_const) * 0.12
+                t_total = t_land + t_const + t_soft
+                revenue = (t_bua * self.efficiency) * new_sell
+                profit = revenue - t_total
+                roi = (profit / t_total) * 100
+                
+                row.append(roi)
+            scenarios.append(row)
+            
+        return pd.DataFrame(scenarios, 
+                            index=["نزول السوق 10%", "سعر ثابت", "ارتفاع السوق 10%"],
+                            columns=["توفير بناء 10%", "تكلفة بناء ثابتة", "زيادة تكلفة 10%"])
 
+# --- القائمة الجانبية (Sidebar) ---
+with st.sidebar:
+    st.image("https://cdn-icons-png.flaticon.com/512/1019/1019709.png", width=80)
+    st.title("المطور العقاري")
+    st.markdown("نسخة: v3.0 (Pro)")
     st.markdown("---")
-    st.subheader("3. بيانات السوق (اختياري)")
-    st.info("💡 إذا كنت تعرف أسعار السوق الحقيقية أدخلها هنا، وإلا اتركها فارغة ليقوم النظام بتقديرها.")
-    use_manual_data = st.checkbox("إدخال أسعار السوق يدوياً")
     
-    manual_land_avg = None
-    manual_sell_avg = None
+    st.header("1. بيانات الأرض")
+    location = st.text_input("📍 اسم الحي / المدينة", "الرياض - الملقا")
+    area = st.number_input("مساحة الأرض (م2)", value=800, step=50)
+    price = st.number_input("سعر المتر (ريال)", value=3800, step=100)
+    floors = st.number_input("عدد الأدوار", value=3.5, step=0.5)
     
-    if use_manual_data:
-        c1, c2 = st.columns(2)
-        manual_land_avg = c1.number_input("متوسط سعر أراضي الحي (ريال/م)", value=3500)
-        manual_sell_avg = c2.number_input("متوسط سعر بيع الشقق الجديد (ريال/م)", value=6500)
+    st.header("2. التكاليف والبيع")
+    const_cost = st.number_input("تكلفة البناء (ريال/م2)", value=2100)
+    margin = st.slider("الربح المستهدف %", 15, 50, 25)
+    
+    st.markdown("---")
+    analyze_btn = st.button("🚀 تحليل الفرصة الآن", type="primary")
 
-    analyze_btn = st.button("🚀 بدء دراسة الجدوى", type="primary", use_container_width=True)
+# --- الواجهة الرئيسية ---
+st.title(f"دراسة جدوى: {location}")
 
-# تشغيل التحليل
 if analyze_btn:
-    engine = FeasibilityEngine(area, price, const_cost, margin, floors, efficiency)
-    results = engine.calculate(manual_land_avg, manual_sell_avg)
+    # 1. التشغيل
+    with st.spinner("جاري تحليل البيانات وحساب السيناريوهات..."):
+        time.sleep(1)
+        engine = FeasibilityEngine(area, price, const_cost, margin, floors, 80)
+        res = engine.calculate()
+        sensitivity_df = engine.sensitivity_analysis(res)
     
-    # تخزين النتائج في Session State لنقلها بين التبويبات
-    st.session_state['results'] = results
-    st.session_state['inputs'] = {'loc': location, 'area': area, 'price': price}
-    st.success("تم التحليل بنجاح! انتقل لتبويب 'التحليل والنتائج' لرؤية التفاصيل.")
+    # 2. عرض النتائج العلوية
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("صافي الربح", f"{res['profit']:,.0f} ﷼")
+    col2.metric("العائد ROI", f"{res['roi']:.2f}%", delta_color="normal" if res['roi']>=margin else "inverse")
+    col3.metric("السعر العادل للأرض", f"{res['fair_price']:,.0f} ﷼", delta=f"{res['fair_price']-price:.0f}")
+    col4.metric("إجمالي الإيراد", f"{res['revenue']:,.0f} ﷼")
+    
+    st.markdown("---")
 
-# تبويب النتائج
-with tab2:
-    if 'results' in st.session_state:
-        res = st.session_state['results']
-        
-        # مؤشرات الأداء الرئيسية (KPIs)
-        kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-        kpi1.metric("صافي الربح المتوقع", f"{res['profit']:,.0f} ريال")
-        kpi2.metric("العائد على الاستثمار ROI", f"{res['roi']:.2f}%", delta_color="normal" if res['roi'] >= margin else "inverse")
-        kpi3.metric("السعر العادل للأرض", f"{res['fair_price']:,.0f} ريال", delta=f"{res['fair_price'] - price:.0f}")
-        kpi4.metric("إيرادات المشروع", f"{res['revenue']:,.0f} ريال")
-        
-        st.markdown("---")
-        
-        # الرسم البياني
-        chart_col1, chart_col2 = st.columns([2, 1])
-        with chart_col1:
-            st.subheader("توزيع التكاليف والأرباح")
-            chart_data = pd.DataFrame({
-                "البند": ["ثمن الأرض", "تكلفة البناء", "مصاريف إدارية", "صافي الربح"],
+    # 3. التبويبات التفصيلية
+    tab1, tab2, tab3 = st.tabs(["📊 التحليل المالي", "🎲 تحليل المخاطر (الحساسية)", "📝 عرض المستثمر"])
+    
+    with tab1:
+        c1, c2 = st.columns([2, 1])
+        with c1:
+            st.subheader("توزيع رأس المال")
+            df_chart = pd.DataFrame({
+                "البند": ["قيمة الأرض", "البناء والتطوير", "مصاريف إدارية وتسويق", "صافي الربح"],
                 "القيمة": [
-                    area * price, 
-                    res['total_dev_cost'] - (area*price) - (res['total_dev_cost']*0.12/1.12), # تقريبي للعرض
-                    res['total_dev_cost'] * 0.12, # تقريبي
+                    area*price, 
+                    res['total_dev_cost'] - (area*price) - (res['total_dev_cost']*0.12/1.12),
+                    res['total_dev_cost'] * 0.12,
                     res['profit']
                 ]
             })
-            st.bar_chart(chart_data.set_index("البند"))
-            
-        with chart_col2:
-            st.subheader("التوصية الذكية")
-            if res['roi'] >= margin:
-                st.markdown(f"""<div class="success-box">
-                ✅ <b>فرصة استثمارية مميزة</b><br>
-                المشروع يحقق عائداً يتجاوز طموحك ({margin}%).<br>
-                السعر المعروض للأرض يعتبر لقطة.
-                </div>""", unsafe_allow_html=True)
-            elif res['roi'] > 0:
-                 st.markdown(f"""<div class="warning-box">
-                ⚠️ <b>فرصة مشروطة</b><br>
-                المشروع رابح لكنه لم يحقق الهدف ({margin}%).<br>
-                يجب التفاوض لتنزيل سعر الأرض إلى <b>{res['fair_price']:,.0f} ريال</b>.
-                </div>""", unsafe_allow_html=True)
-            else:
-                st.error("⛔ المشروع خاسر بالسعر الحالي. لا ينصح بالشراء.")
+            st.bar_chart(df_chart.set_index("البند"))
+        with c2:
+            st.info(f"""
+            **مؤشرات المشروع:**
+            * مسطحات البناء: {res['bua']:,.0f} م2
+            * المساحة البيعية: {res['sellable']:,.0f} م2
+            * متوسط سعر بيع المتر المتوقع: {res['market_sell_avg']:,.0f} ريال
+            """)
 
-# تبويب التقرير
-with tab3:
-    if 'results' in st.session_state:
-        res = st.session_state['results']
-        inp = st.session_state['inputs']
+    with tab2:
+        st.subheader("تحليل ماذا لو؟ (Sensitivity Analysis)")
+        st.caption("هذا الجدول يوضح نسبة العائد (ROI) في حال تغيرت تكاليف البناء أو أسعار البيع.")
         
-        st.header("📑 ملخص دراسة الجدوى")
-        st.text(f"تاريخ التقرير: {time.strftime('%Y-%m-%d')}")
-        st.text(f"الموقع: {inp['loc']}")
+        # تنسيق الجدول بالألوان
+        st.dataframe(sensitivity_df.style.background_gradient(cmap="RdYlGn", vmin=0, vmax=30).format("{:.1f}%"))
         
-        report_df = pd.DataFrame({
-            "البيان": ["مساحة الأرض", "سعر المتر (أرض)", "مسطحات البناء (BUA)", "المساحة البيعية الصافية", "إجمالي التكلفة", "الإيراد المتوقع", "صافي الربح", "العائد ROI"],
-            "القيمة": [
-                f"{inp['area']} م2",
-                f"{inp['price']} ريال",
-                f"{res['bua']:,.0f} م2",
-                f"{res['sellable']:,.0f} م2",
-                f"{res['total_dev_cost']:,.0f} ريال",
-                f"{res['revenue']:,.0f} ريال",
-                f"{res['profit']:,.0f} ريال",
-                f"{res['roi']:.2f} %"
-            ]
-        })
-        st.table(report_df)
+        st.write("📌 **كيف تقرأ الجدول؟** اللون الأخضر يعني أمان عالي، الأحمر يعني خسارة محتملة.")
+
+    with tab3:
+        st.subheader("مسودة عرض للمستثمرين (Auto-Generated Pitch)")
+        pitch_text = f"""
+        **فرصة استثمارية في {location}**
         
-        # زر تحميل البيانات (CSV)
-        csv = report_df.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            "📥 تحميل الملخص (CSV)",
-            data=csv,
-            file_name="feasibility_study.csv",
-            mime="text/csv",
-        )
-    else:
-        st.info("قم بإجراء التحليل أولاً لعرض التقرير.")
+        نعرض عليكم فرصة لتطوير أرض سكنية بمساحة {area} متر مربع.
+        المشروع يهدف لإنشاء مبنى سكني مكون من {floors} أدوار، بمساحة بيعية إجمالية تبلغ {res['sellable']:,.0f} متر.
+        
+        **المؤشرات المالية:**
+        بناءً على دراسة السوق الحالية، نتوقع تحقيق إيرادات إجمالية قدرها {res['revenue']/1000000:.2f} مليون ريال، 
+        وصافي ربح يقدر بـ {res['profit']/1000000:.2f} مليون ريال، مما يحقق عائداً على الاستثمار يبلغ {res['roi']:.2f}% خلال مدة التطوير.
+        
+        سعر الأرض الحالي ({price} ريال/م) يعتبر {("جيداً" if res['roi'] >= 20 else "مرتفعاً قليلاً")} مقارنة بأسعار المنطقة.
+        """
+        st.text_area("انسخ النص التالي:", pitch_text, height=250)
+
+else:
+    st.info("👈 أدخل البيانات في القائمة اليمنى واضغط زر التحليل")
+    
+    # خريطة توضيحية (Placeholder)
+    st.caption("موقع افتراضي (الرياض)")
+    st.map(pd.DataFrame({'lat': [24.7136], 'lon': [46.6753]}))
