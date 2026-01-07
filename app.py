@@ -3,202 +3,182 @@ import numpy as np
 import pandas as pd
 import time
 
-# --- إعداد الصفحة (Page Config) ---
+# --- إعدادات الصفحة ---
 st.set_page_config(
     page_title="المطور العقاري برو | Real Estate Pro",
     layout="wide",
-    page_icon="🏙️",
+    page_icon="🏗️",
     initial_sidebar_state="expanded"
 )
 
-# --- التنسيق المخصص (CSS Styling) ---
+# --- تنسيق CSS احترافي ---
 st.markdown("""
 <style>
-    .main {background-color: #f8f9fa;}
-    .stMetric {background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);}
-    .big-font {font-size:18px !important; color: #333;}
-    .header-style {color: #1f77b4;}
+    .metric-card {background-color: #ffffff; padding: 15px; border-radius: 10px; border-left: 5px solid #1f77b4; box-shadow: 0 2px 5px rgba(0,0,0,0.1);}
+    .highlight {color: #2e7d32; font-weight: bold;}
+    .loss {color: #c62828; font-weight: bold;}
 </style>
 """, unsafe_allow_html=True)
 
-# --- المحرك الحسابي (Calculation Engine) ---
-class FeasibilityEngine:
-    def __init__(self, area, price, const_cost, margin, floors, efficiency):
-        self.area = area
-        self.price = price
-        self.const_cost = const_cost
-        self.target_margin = margin / 100
-        self.floors = floors
-        self.efficiency = efficiency / 100
+# --- محرك التحليل المالي والزمني ---
+class FinancialEngine:
+    def __init__(self, inputs):
+        self.inputs = inputs
 
-    def calculate(self, avg_market_land=None, avg_sell_price=None):
-        # محاكاة البيانات في حال عدم الإدخال اليدوي
-        if avg_market_land is None:
-            avg_market_land = self.price * np.random.uniform(0.95, 1.05)
+    def generate_cash_flow(self):
+        duration = self.inputs['duration']
+        total_months = range(duration + 1)
         
-        if avg_sell_price is None:
-            # معادلة تقديرية: (سعر الأرض/2) + تكلفة البناء + 2500 هامش وتسويق
-            avg_sell_price = (avg_market_land / 2.0) + self.const_cost + 2500
+        # 1. التكاليف (Outflows)
+        land_cost = self.inputs['area'] * self.inputs['land_price']
+        total_const = self.inputs['area'] * self.inputs['floors'] * self.inputs['const_cost']
+        soft_costs = (land_cost + total_const) * (self.inputs['soft_cost_pct'] / 100)
+        
+        # توزيع التكاليف زمنياً
+        # الشهر 0: شراء الأرض + 20% مصاريف إدارية
+        costs_timeline = np.zeros(duration + 1)
+        costs_timeline[0] = land_cost + (soft_costs * 0.2)
+        
+        # البناء يبدأ من الشهر 1 وينتهي قبل شهرين من النهاية
+        const_months = max(1, duration - 3)
+        monthly_const = total_const / const_months
+        monthly_soft = (soft_costs * 0.8) / const_months
+        
+        for m in range(1, const_months + 1):
+            costs_timeline[m] = monthly_const + monthly_soft
 
-        # الحسابات الأساسية
-        total_land_cost = self.area * self.price
-        total_bua = self.area * self.floors
-        net_sellable = total_bua * self.efficiency
+        # 2. الإيرادات (Inflows)
+        # نفترض البيع يبدأ بعد اكتمال 60% من المشروع (على الخارطة) أو عند الانتهاء
+        start_sales_month = int(duration * 0.6)
+        sales_duration = duration - start_sales_month
         
-        total_const_cost = total_bua * self.const_cost
-        # المصاريف الإدارية والتسويقية (Soft Costs)
-        soft_costs = (total_land_cost + total_const_cost) * 0.12 
+        total_revenue = (self.inputs['area'] * self.inputs['floors'] * self.inputs['efficiency'] / 100) * self.inputs['sell_price']
         
-        total_project_cost = total_land_cost + total_const_cost + soft_costs
-        expected_revenue = net_sellable * avg_sell_price
-        
-        net_profit = expected_revenue - total_project_cost
-        roi = (net_profit / total_project_cost) * 100
-        
-        # السعر العادل (Reverse Calculation)
-        max_total_cost = expected_revenue / (1 + self.target_margin)
-        fair_land_total = (max_total_cost - total_const_cost) / 1.12
-        fair_land_price_per_m = fair_land_total / self.area
+        revenue_timeline = np.zeros(duration + 1)
+        if sales_duration > 0:
+            monthly_sales = total_revenue / sales_duration
+            for m in range(start_sales_month, duration + 1):
+                revenue_timeline[m] = monthly_sales
+        else:
+             revenue_timeline[duration] = total_revenue
 
+        # 3. صافي التدفق التراكمي
+        net_monthly = revenue_timeline - costs_timeline
+        cumulative_cash = np.cumsum(net_monthly)
+        
+        df = pd.DataFrame({
+            "الشهر": total_months,
+            "مصاريف": -costs_timeline, # بالسالب للرسم
+            "إيرادات": revenue_timeline,
+            "صافي شهري": net_monthly,
+            "تراكمي (السيولة)": cumulative_cash
+        })
+        
         return {
-            "inputs": {"area": self.area, "price": self.price, "floors": self.floors},
-            "market_land_avg": avg_market_land,
-            "market_sell_avg": avg_sell_price,
-            "total_dev_cost": total_project_cost,
-            "revenue": expected_revenue,
-            "profit": net_profit,
-            "roi": roi,
-            "fair_price": fair_land_price_per_m,
-            "bua": total_bua,
-            "sellable": net_sellable
+            "df": df,
+            "total_cost": land_cost + total_const + soft_costs,
+            "total_revenue": total_revenue,
+            "profit": total_revenue - (land_cost + total_const + soft_costs),
+            "roi": ((total_revenue - (land_cost + total_const + soft_costs)) / (land_cost + total_const + soft_costs)) * 100,
+            "peak_cash_needed": abs(min(cumulative_cash)) # أقصى سيولة يحتاجها المشروع
         }
 
-    # ميزة جديدة: تحليل الحساسية
-    def sensitivity_analysis(self, base_results):
-        scenarios = []
-        # نقوم بتغيير تكلفة البناء وسعر البيع بنسبة -10% و +10%
-        variations = [-0.10, 0.0, 0.10] 
-        
-        base_sell_price = base_results['market_sell_avg']
-        base_const_cost = self.const_cost
-        
-        for v_sell in variations:
-            row = []
-            for v_const in variations:
-                # محاكاة سيناريو جديد
-                new_sell = base_sell_price * (1 + v_sell)
-                new_const = base_const_cost * (1 + v_const)
-                
-                # إعادة الحساب سريعاً
-                t_land = self.area * self.price
-                t_bua = self.area * self.floors
-                t_const = t_bua * new_const
-                t_soft = (t_land + t_const) * 0.12
-                t_total = t_land + t_const + t_soft
-                revenue = (t_bua * self.efficiency) * new_sell
-                profit = revenue - t_total
-                roi = (profit / t_total) * 100
-                
-                row.append(roi)
-            scenarios.append(row)
-            
-        return pd.DataFrame(scenarios, 
-                            index=["نزول السوق 10%", "سعر ثابت", "ارتفاع السوق 10%"],
-                            columns=["توفير بناء 10%", "تكلفة بناء ثابتة", "زيادة تكلفة 10%"])
-
-# --- القائمة الجانبية (Sidebar) ---
+# --- الواجهة الجانبية (مدخلات دقيقة) ---
 with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/1019/1019709.png", width=80)
-    st.title("المطور العقاري")
-    st.markdown("نسخة: v3.0 (Pro)")
-    st.markdown("---")
+    st.title("🏗️ مدخلات المشروع")
     
-    st.header("1. بيانات الأرض")
-    location = st.text_input("📍 اسم الحي / المدينة", "الرياض - الملقا")
-    area = st.number_input("مساحة الأرض (م2)", value=800, step=50)
-    price = st.number_input("سعر المتر (ريال)", value=3800, step=100)
-    floors = st.number_input("عدد الأدوار", value=3.5, step=0.5)
+    with st.expander("1. بيانات الأرض", expanded=True):
+        area = st.number_input("المساحة (م2)", 500, 10000, 800)
+        land_price = st.number_input("سعر متر الأرض (ريال)", 1000, 20000, 3500)
     
-    st.header("2. التكاليف والبيع")
-    const_cost = st.number_input("تكلفة البناء (ريال/م2)", value=2100)
-    margin = st.slider("الربح المستهدف %", 15, 50, 25)
+    with st.expander("2. التطوير والبناء", expanded=True):
+        floors = st.number_input("عدد الأدوار", 1.0, 50.0, 4.0)
+        const_cost = st.number_input("تكلفة البناء (ريال/م2)", 1000, 5000, 2200)
+        soft_cost_pct = st.slider("مصاريف إدارية وتسويق %", 5, 20, 12)
+        duration = st.slider("مدة المشروع (أشهر)", 6, 36, 18)
     
-    st.markdown("---")
-    analyze_btn = st.button("🚀 تحليل الفرصة الآن", type="primary")
+    with st.expander("3. المبيعات", expanded=True):
+        efficiency = st.slider("كفاءة البيع (الصافي) %", 60, 95, 80)
+        # ميزة: حساب سعر البيع تلقائياً بناء على هامش ربح
+        target_margin = st.number_input("هامش الربح المستهدف %", 15, 100, 25)
+        # معادلة عكسية تقديرية لسعر البيع المقترح
+        est_cost = (area * land_price) + (area * floors * const_cost * 1.15)
+        est_rev = est_cost * (1 + target_margin/100)
+        suggested_price = est_rev / (area * floors * efficiency / 100)
+        
+        st.info(f"سعر السوق المقترح: {suggested_price:,.0f} ريال")
+        sell_price = st.number_input("سعر بيع المتر المعتمد (ريال)", 1000, 50000, int(suggested_price))
+
+    btn_calc = st.button("📊 بدء التحليل المالي", type="primary")
 
 # --- الواجهة الرئيسية ---
-st.title(f"دراسة جدوى: {location}")
+st.title("نظام تحليل الجدوى والتدفقات النقدية")
 
-if analyze_btn:
-    # 1. التشغيل
-    with st.spinner("جاري تحليل البيانات وحساب السيناريوهات..."):
-        time.sleep(1)
-        engine = FeasibilityEngine(area, price, const_cost, margin, floors, 80)
-        res = engine.calculate()
-        sensitivity_df = engine.sensitivity_analysis(res)
+if btn_calc:
+    inputs = {
+        "area": area, "land_price": land_price, "floors": floors,
+        "const_cost": const_cost, "soft_cost_pct": soft_cost_pct,
+        "duration": duration, "efficiency": efficiency, "sell_price": sell_price
+    }
     
-    # 2. عرض النتائج العلوية
+    engine = FinancialEngine(inputs)
+    results = engine.generate_cash_flow()
+    
+    # 1. الملخص التنفيذي
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("صافي الربح", f"{res['profit']:,.0f} ﷼")
-    col2.metric("العائد ROI", f"{res['roi']:.2f}%", delta_color="normal" if res['roi']>=margin else "inverse")
-    col3.metric("السعر العادل للأرض", f"{res['fair_price']:,.0f} ﷼", delta=f"{res['fair_price']-price:.0f}")
-    col4.metric("إجمالي الإيراد", f"{res['revenue']:,.0f} ﷼")
+    col1.metric("صافي الربح", f"{results['profit']:,.0f} ريال")
+    col2.metric("العائد ROI", f"{results['roi']:.1f}%", delta_color="normal" if results['roi'] > 20 else "inverse")
+    col3.metric("أقصى سيولة مطلوبة (رأس المال)", f"{results['peak_cash_needed']:,.0f} ريال", help="أقصى مبلغ تدفعه من جيبك قبل أن تبدأ البيع يغطي التكاليف")
+    col4.metric("إجمالي التكلفة", f"{results['total_cost']:,.0f} ريال")
     
     st.markdown("---")
-
-    # 3. التبويبات التفصيلية
-    tab1, tab2, tab3 = st.tabs(["📊 التحليل المالي", "🎲 تحليل المخاطر (الحساسية)", "📝 عرض المستثمر"])
+    
+    # 2. الرسم البياني للتدفقات (أهم جزء للموثوقية)
+    st.subheader("📈 تحليل السيولة (Cash Flow)")
+    tab1, tab2 = st.tabs(["المنحنى التراكمي (J-Curve)", "جدول التدفقات الشهرية"])
     
     with tab1:
-        c1, c2 = st.columns([2, 1])
-        with c1:
-            st.subheader("توزيع رأس المال")
-            df_chart = pd.DataFrame({
-                "البند": ["قيمة الأرض", "البناء والتطوير", "مصاريف إدارية وتسويق", "صافي الربح"],
-                "القيمة": [
-                    area*price, 
-                    res['total_dev_cost'] - (area*price) - (res['total_dev_cost']*0.12/1.12),
-                    res['total_dev_cost'] * 0.12,
-                    res['profit']
-                ]
-            })
-            st.bar_chart(df_chart.set_index("البند"))
-        with c2:
-            st.info(f"""
-            **مؤشرات المشروع:**
-            * مسطحات البناء: {res['bua']:,.0f} م2
-            * المساحة البيعية: {res['sellable']:,.0f} م2
-            * متوسط سعر بيع المتر المتوقع: {res['market_sell_avg']:,.0f} ريال
-            """)
-
+        st.caption("هذا الرسم يوضح متى ستحتاج لدفع المال (تحت الصفر) ومتى تبدأ بجني الأرباح (فوق الصفر).")
+        st.line_chart(results['df'].set_index("الشهر")['تراكمي (السيولة)'])
+        
+        if results['roi'] < 0:
+            st.error("⚠️ تحذير: المشروع يحقق خسارة في نهايته. راجع سعر البيع أو تكلفة الأرض.")
+        else:
+            breakeven_month = results['df'][results['df']['تراكمي (السيولة)'] >= 0].index.min()
+            if pd.notna(breakeven_month):
+                st.success(f"✅ نقطة التعادل (Break-even): تسترد رأس مالك في الشهر رقم **{breakeven_month}**.")
+    
     with tab2:
-        st.subheader("تحليل ماذا لو؟ (Sensitivity Analysis)")
-        st.caption("هذا الجدول يوضح نسبة العائد (ROI) في حال تغيرت تكاليف البناء أو أسعار البيع.")
-        
-        # تنسيق الجدول بالألوان
-        st.dataframe(sensitivity_df.style.background_gradient(cmap="RdYlGn", vmin=0, vmax=30).format("{:.1f}%"))
-        
-        st.write("📌 **كيف تقرأ الجدول؟** اللون الأخضر يعني أمان عالي، الأحمر يعني خسارة محتملة.")
+        st.dataframe(results['df'].style.format("{:,.0f}"))
 
-    with tab3:
-        st.subheader("مسودة عرض للمستثمرين (Auto-Generated Pitch)")
-        pitch_text = f"""
-        **فرصة استثمارية في {location}**
+    st.markdown("---")
+    
+    # 3. تقرير الحساسية (تحليل المخاطر)
+    st.subheader("🎲 تحليل المخاطر (Sensitivity Analysis)")
+    st.caption("ماذا لو انخفض سعر البيع أو زادت التكاليف؟")
+    
+    risk_data = []
+    base_roi = results['roi']
+    
+    for p_change in [-10, -5, 0, 5, 10]: # تغيير سعر البيع
+        rev_change = results['total_revenue'] * (1 + p_change/100)
+        profit_change = rev_change - results['total_cost']
+        roi_change = (profit_change / results['total_cost']) * 100
+        risk_data.append(roi_change)
         
-        نعرض عليكم فرصة لتطوير أرض سكنية بمساحة {area} متر مربع.
-        المشروع يهدف لإنشاء مبنى سكني مكون من {floors} أدوار، بمساحة بيعية إجمالية تبلغ {res['sellable']:,.0f} متر.
-        
-        **المؤشرات المالية:**
-        بناءً على دراسة السوق الحالية، نتوقع تحقيق إيرادات إجمالية قدرها {res['revenue']/1000000:.2f} مليون ريال، 
-        وصافي ربح يقدر بـ {res['profit']/1000000:.2f} مليون ريال، مما يحقق عائداً على الاستثمار يبلغ {res['roi']:.2f}% خلال مدة التطوير.
-        
-        سعر الأرض الحالي ({price} ريال/م) يعتبر {("جيداً" if res['roi'] >= 20 else "مرتفعاً قليلاً")} مقارنة بأسعار المنطقة.
-        """
-        st.text_area("انسخ النص التالي:", pitch_text, height=250)
+    risk_df = pd.DataFrame(
+        [risk_data], 
+        columns=["-10%", "-5%", "السعر الحالي", "+5%", "+10%"],
+        index=["تغير العائد ROI"]
+    )
+    
+    st.dataframe(risk_df.style.background_gradient(cmap="RdYlGn", vmin=0, vmax=40).format("{:.1f}%"))
 
 else:
-    st.info("👈 أدخل البيانات في القائمة اليمنى واضغط زر التحليل")
-    
-    # خريطة توضيحية (Placeholder)
-    st.caption("موقع افتراضي (الرياض)")
-    st.map(pd.DataFrame({'lat': [24.7136], 'lon': [46.6753]}))
+    st.info("👈 قم بتعبئة بيانات المشروع في القائمة الجانبية بدقة لضمان نتيجة موثوقة.")
+    st.markdown("""
+    ### لماذا هذا التحليل موثوق؟
+    * **لا يعتمد على الصدفة:** الحسابات دقيقة بناءً على معطياتك.
+    * **يحسب عامل الوقت:** يوضح لك متى تحتاج الكاش (Cash Burn).
+    * **يحدد نقطة التعادل:** متى يرجع لك رأس مالك بالضبط.
+    """)
