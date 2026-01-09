@@ -1,49 +1,72 @@
-# data_bot.py
-import random
-import time
-from datetime import datetime
-import urllib.parse
+# dashboard.py
+import streamlit as st
+import pandas as pd
+from data_bot import RealEstateBot
 
-class RealEstateBot:
-    def generate_links(self, city, district):
-        q = urllib.parse.quote(f"{city} {district}")
-        return {
-            "rega": "https://rei.rega.gov.sa/?topDistrictOrder=transactions",
-            "earth": "https://earthapp.com.sa/transaction",
-            "sas": f"https://aqarsas.sa/search?q={q}"
-        }
+# إعداد الصفحة لتكون عريضة (Wide Mode) لراحة العين مع الجداول
+st.set_page_config(page_title="غرفة مراقبة البيانات", layout="wide", page_icon="📊")
 
-    def fetch_data(self, district):
-        # محاكاة سحب البيانات
-        time.sleep(0.8)
-        db = {
-            "الملقا": {"exec": 6500, "comp": [9500, 7800, 6200], "ticket": 1300000},
-            "العارض": {"exec": 3800, "comp": [5500, 4200, 3900], "ticket": 950000},
-            "النرجس": {"exec": 4200, "comp": [6000, 4800, 4500], "ticket": 1100000},
-        }
+bot = RealEstateBot()
+
+# --- الهيدر ---
+col_h1, col_h2 = st.columns([3, 1])
+col_h1.title("📊 غرفة تحليل بيانات السوق")
+col_h1.caption("لوحة تحكم للمراقبة والمقارنة - (Admin View)")
+
+# --- شريط البحث العلوي ---
+with st.container():
+    c1, c2, c3 = st.columns([2, 2, 1])
+    city = c1.text_input("المدينة", "الرياض", label_visibility="collapsed", placeholder="المدينة")
+    district = c2.text_input("الحي", "حي الملقا", label_visibility="collapsed", placeholder="الحي")
+    btn_run = c3.button("🔍 سحب البيانات", type="primary", use_container_width=True)
+
+st.markdown("---")
+
+if btn_run:
+    with st.spinner("جاري الاتصال بالروبوت وجلب الجداول..."):
+        data = bot.fetch_data(district)
+    
+    if data['status'] == 'success':
+        # 1. المؤشرات السريعة (KPIs)
+        k1, k2, k3 = st.columns(3)
+        k1.metric("توقيت السحب", data['timestamp'])
+        k2.metric("متوسط التنفيذ (الأساس)", f"{data['summary']['exec_avg']:,.0f} ريال")
+        k3.metric("سقف الشقة (Ticket)", f"{data['summary']['ticket_cap']:,.0f} ريال")
         
-        found = None
-        for k in db:
-            if k in district: found = db[k]
+        st.markdown("### 📋 جدول تحليل الأسعار")
         
-        ts = datetime.now().strftime("%H:%M:%S")
+        # 2. إنشاء الجدول الذكي
+        df = pd.DataFrame(data['records'])
         
-        if found:
-            var = random.uniform(0.99, 1.01)
-            # نرجع البيانات بهيكل منظم جداً للجدول
-            return {
-                "status": "success",
-                "timestamp": ts,
-                "summary": {
-                    "exec_avg": int(found['exec'] * var),
-                    "ticket_cap": int(found['ticket'] * var)
-                },
-                "records": [ # هذه القائمة هي التي ستتحول لجدول
-                    {"النوع": "تنفيذ (صفقات)", "الفئة": "السوق", "السعر": int(found['exec']*var), "المصدر": "وزارة العدل", "الحالة": "مؤكد"},
-                    {"النوع": "عرض بيع", "الفئة": "A (فاخر)", "السعر": int(found['comp'][0]*var), "المصدر": "تطبيق عقار", "الحالة": "تقديري"},
-                    {"النوع": "عرض بيع", "الفئة": "B (متوسط)", "السعر": int(found['comp'][1]*var), "المصدر": "تطبيق عقار", "الحالة": "تقديري"},
-                    {"النوع": "عرض بيع", "الفئة": "C (اقتصادي)", "السعر": int(found['comp'][2]*var), "المصدر": "مكاتب", "الحالة": "تقديري"},
-                ]
-            }
-        else:
-            return {"status": "failed", "timestamp": ts}
+        # تنسيق الجدول (تلوين الأسعار)
+        # هذا الكود يجعل الخلفية متدرجة حسب السعر (الأغلى أحمر، الأرخص أخضر)
+        st.dataframe(
+            df.style.background_gradient(subset=['السعر'], cmap="RdYlGn_r") # _r لعكس الألوان
+              .format({"السعر": "{:,.0f} ريال"}),
+            use_container_width=True,
+            height=300, # ارتفاع الجدول
+            hide_index=True
+        )
+        
+        # 3. روابط المصادر (أزرار سريعة)
+        st.markdown("### 🔗 التحقق من المصادر")
+        links = bot.generate_links(city, district)
+        lc1, lc2, lc3, lc4 = st.columns(4)
+        lc1.link_button("مؤشر الهيئة", links['rega'])
+        lc2.link_button("منصة إيرث", links['earth'])
+        lc3.link_button("عقار ساس", links['sas'])
+        
+        # 4. التصدير
+        st.download_button(
+            "📥 تحميل الجدول (Excel/CSV)",
+            data=df.to_csv(index=False).encode('utf-8'),
+            file_name=f"market_data_{district}.csv",
+            mime="text/csv"
+        )
+
+    else:
+        st.error(f"❌ لم يتم العثور على بيانات لحي: {district}")
+
+else:
+    st.info("اضغط زر 'سحب البيانات' لعرض الجدول.")
+    
