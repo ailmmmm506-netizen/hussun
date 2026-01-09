@@ -1,51 +1,49 @@
 # data_bot.py
-import urllib.parse
 import random
 import time
 from datetime import datetime
+import urllib.parse
 
 class RealEstateBot:
-    def __init__(self):
-        # قاعدة بيانات محاكاة (يمكنك لاحقاً استبدالها بكود Scraping حقيقي)
-        self.db = {
+    def generate_links(self, city, district):
+        q = urllib.parse.quote(f"{city} {district}")
+        return {
+            "rega": "https://rei.rega.gov.sa/?topDistrictOrder=transactions",
+            "earth": "https://earthapp.com.sa/transaction",
+            "sas": f"https://aqarsas.sa/search?q={q}"
+        }
+
+    def fetch_data(self, district):
+        # محاكاة سحب البيانات
+        time.sleep(0.8)
+        db = {
             "الملقا": {"exec": 6500, "comp": [9500, 7800, 6200], "ticket": 1300000},
             "العارض": {"exec": 3800, "comp": [5500, 4200, 3900], "ticket": 950000},
             "النرجس": {"exec": 4200, "comp": [6000, 4800, 4500], "ticket": 1100000},
         }
-
-    def generate_links(self, city, district):
-        query = urllib.parse.quote(f"{city} {district}")
-        return {
-            "rega": "https://rei.rega.gov.sa/?topDistrictOrder=transactions",
-            "earth": "https://earthapp.com.sa/transaction",
-            "sas": f"https://aqarsas.sa/search?q={query}"
-        }
-
-    def fetch_data(self, city, district):
-        # محاكاة الوقت المستغرق للسحب
-        time.sleep(1.0)
         
-        # البحث
         found = None
-        for k in self.db:
-            if k in district: found = self.db[k]
+        for k in db:
+            if k in district: found = db[k]
         
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ts = datetime.now().strftime("%H:%M:%S")
         
         if found:
-            var = random.uniform(0.98, 1.02) # تغيير بسيط للواقعية
+            var = random.uniform(0.99, 1.01)
+            # نرجع البيانات بهيكل منظم جداً للجدول
             return {
                 "status": "success",
-                "meta": {"time": timestamp, "source": "Internal DB", "district": district},
-                "market": {
-                    "execution_price": int(found['exec'] * var),
-                    "max_ticket": int(found['ticket'] * var)
+                "timestamp": ts,
+                "summary": {
+                    "exec_avg": int(found['exec'] * var),
+                    "ticket_cap": int(found['ticket'] * var)
                 },
-                "competitors": [
-                    {"tier": "A (فاخر)", "price": int(found['comp'][0]*var), "notes": "مواصفات سمارت"},
-                    {"tier": "B (متوسط)", "price": int(found['comp'][1]*var), "notes": "تشطيب مودرن"},
-                    {"tier": "C (اقتصادي)", "price": int(found['comp'][2]*var), "notes": "تجاري"}
+                "records": [ # هذه القائمة هي التي ستتحول لجدول
+                    {"النوع": "تنفيذ (صفقات)", "الفئة": "السوق", "السعر": int(found['exec']*var), "المصدر": "وزارة العدل", "الحالة": "مؤكد"},
+                    {"النوع": "عرض بيع", "الفئة": "A (فاخر)", "السعر": int(found['comp'][0]*var), "المصدر": "تطبيق عقار", "الحالة": "تقديري"},
+                    {"النوع": "عرض بيع", "الفئة": "B (متوسط)", "السعر": int(found['comp'][1]*var), "المصدر": "تطبيق عقار", "الحالة": "تقديري"},
+                    {"النوع": "عرض بيع", "الفئة": "C (اقتصادي)", "السعر": int(found['comp'][2]*var), "المصدر": "مكاتب", "الحالة": "تقديري"},
                 ]
             }
         else:
-            return {"status": "failed", "meta": {"time": timestamp}, "msg": "الحي غير مسجل"}
+            return {"status": "failed", "timestamp": ts}
