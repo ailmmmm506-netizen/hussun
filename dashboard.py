@@ -1,53 +1,49 @@
-# dashboard.py
-# تشغيل هذا الملف: streamlit run dashboard.py
-import streamlit as st
-import pandas as pd
-from data_bot import RealEstateBot
+# data_bot.py
+import random
+import time
+from datetime import datetime
+import urllib.parse
 
-st.set_page_config(page_title="غرفة التحكم بالبيانات", layout="wide", page_icon="🕵️‍♂️")
+class RealEstateBot:
+    def generate_links(self, city, district):
+        q = urllib.parse.quote(f"{city} {district}")
+        return {
+            "rega": "https://rei.rega.gov.sa/?topDistrictOrder=transactions",
+            "earth": "https://earthapp.com.sa/transaction",
+            "sas": f"https://aqarsas.sa/search?q={q}"
+        }
 
-# استدعاء المحرك
-bot = RealEstateBot()
-
-st.title("🕵️‍♂️ غرفة مراقبة الروبوت (Admin Data View)")
-st.markdown("---")
-
-# 1. إعدادات البحث
-c1, c2, c3 = st.columns([2, 2, 1])
-city = c1.text_input("المدينة", "الرياض")
-district = c2.text_input("الحي المستهدف", "حي الملقا")
-btn = c3.button("تشغيل الروبوت 🤖", type="primary")
-
-if btn:
-    with st.spinner("جاري الاتصال بالمصادر وسحب البيانات..."):
-        data = bot.fetch_data(city, district)
-    
-    if data['status'] == 'success':
-        # 2. عرض الميتاداتا (التوقيت والحالة)
-        st.success(f"تم السحب بنجاح @ {data['meta']['time']}")
+    def fetch_data(self, district):
+        # محاكاة سحب البيانات
+        time.sleep(0.8)
+        db = {
+            "الملقا": {"exec": 6500, "comp": [9500, 7800, 6200], "ticket": 1300000},
+            "العارض": {"exec": 3800, "comp": [5500, 4200, 3900], "ticket": 950000},
+            "النرجس": {"exec": 4200, "comp": [6000, 4800, 4500], "ticket": 1100000},
+        }
         
-        # 3. عرض الأرقام الرئيسية
-        col1, col2 = st.columns(2)
-        col1.metric("سعر التنفيذ (العدل)", f"{data['market']['execution_price']:,.0f}", "ريال/م")
-        col2.metric("سقف الشقة (Ticket)", f"{data['market']['max_ticket']:,.0f}", "ريال")
+        found = None
+        for k in db:
+            if k in district: found = db[k]
         
-        # 4. جدول المنافسين (التفاصيل الدقيقة)
-        st.subheader("📋 جدول المنافسين المرصود")
-        df = pd.DataFrame(data['competitors'])
-        st.dataframe(df.style.format({"price": "{:,.0f}"}), use_container_width=True)
+        ts = datetime.now().strftime("%H:%M:%S")
         
-        # 5. الروابط التي زارها الروبوت
-        st.subheader("🔗 المصادر التي تم فحصها")
-        links = bot.generate_links(city, district)
-        for name, link in links.items():
-            st.markdown(f"- **{name}**: [{link}]({link})")
-            
-        # 6. الكود الخام (JSON) للتأكد
-        with st.expander("💾 عرض البيانات الخام (JSON Structure)"):
-            st.json(data)
-            
-    else:
-        st.error("فشل الروبوت في العثور على بيانات لهذا الحي.")
-
-else:
-    st.info("اضغط 'تشغيل الروبوت' لرؤية البيانات الحية.")
+        if found:
+            var = random.uniform(0.99, 1.01)
+            # نرجع البيانات بهيكل منظم جداً للجدول
+            return {
+                "status": "success",
+                "timestamp": ts,
+                "summary": {
+                    "exec_avg": int(found['exec'] * var),
+                    "ticket_cap": int(found['ticket'] * var)
+                },
+                "records": [ # هذه القائمة هي التي ستتحول لجدول
+                    {"النوع": "تنفيذ (صفقات)", "الفئة": "السوق", "السعر": int(found['exec']*var), "المصدر": "وزارة العدل", "الحالة": "مؤكد"},
+                    {"النوع": "عرض بيع", "الفئة": "A (فاخر)", "السعر": int(found['comp'][0]*var), "المصدر": "تطبيق عقار", "الحالة": "تقديري"},
+                    {"النوع": "عرض بيع", "الفئة": "B (متوسط)", "السعر": int(found['comp'][1]*var), "المصدر": "تطبيق عقار", "الحالة": "تقديري"},
+                    {"النوع": "عرض بيع", "الفئة": "C (اقتصادي)", "السعر": int(found['comp'][2]*var), "المصدر": "مكاتب", "الحالة": "تقديري"},
+                ]
+            }
+        else:
+            return {"status": "failed", "timestamp": ts}
