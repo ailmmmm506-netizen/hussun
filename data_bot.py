@@ -5,13 +5,12 @@ from googleapiclient.discovery import build
 import io
 import csv
 import os
-import json
 
 # إعدادات الاتصال
 FOLDER_ID = "1kgzKj9sn8pQVjr78XcN7_iF5KLmflwME"
 SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
 
-# قاموس الترجمة
+# قاموس الترجمة وتوحيد الأسماء
 COLUMN_MAPPING = {
     'السعر': 'السعر', 'مبلغ الصفقة': 'السعر', 'Price': 'السعر', 'قيمة الصفقات': 'السعر', 'سعر الوحدة': 'السعر',
     'المساحة': 'المساحة', 'المساحة بالأمتار': 'المساحة', 'Area': 'المساحة', 'مساحة الوحدة': 'المساحة',
@@ -33,13 +32,12 @@ class RealEstateBot:
         self.log_messages.append(msg)
 
     def get_creds(self):
-        # 1. المحاولة الأولى: البحث عن الملف في الجهاز (للاستخدام المحلي)
+        # 1. البحث عن الملف محلياً (للاستخدام في Codespace)
         if os.path.exists('credentials.json'):
             return service_account.Credentials.from_service_account_file('credentials.json', scopes=SCOPES)
         
-        # 2. المحاولة الثانية: البحث في أسرار Streamlit (للاستخدام بعد الرفع)
+        # 2. البحث في أسرار Streamlit (للاستخدام بعد النشر)
         elif 'gcp_service_account' in st.secrets:
-            # تحويل البيانات من صيغة TOML/Dict إلى كائن Credentials
             return service_account.Credentials.from_service_account_info(st.secrets['gcp_service_account'], scopes=SCOPES)
         
         else:
@@ -70,6 +68,7 @@ class RealEstateBot:
                     except:
                         content_str = content_bytes.decode('utf-16')
 
+                    # تحديد نوع الملف
                     is_developer_file = any(x in file['name'].lower() for x in ['dev', 'مطور', 'brochure', 'projects'])
                     
                     if is_developer_file:
@@ -89,8 +88,10 @@ class RealEstateBot:
                             if header_row and len(clean_row) >= len(header_row):
                                 data_rows.append(clean_row[:len(header_row)])
                         
-                        if header_row: df_temp = pd.DataFrame(data_rows, columns=header_row)
-                        else: self.log("❌ فشل MOJ"); continue
+                        if header_row: 
+                            df_temp = pd.DataFrame(data_rows, columns=header_row)
+                        else: 
+                            self.log("❌ فشل MOJ"); continue
                         df_temp['Source_Type'] = 'صفقات_منفذة (العدل)'
 
                     else:
@@ -98,15 +99,17 @@ class RealEstateBot:
                         df_temp = pd.read_csv(io.StringIO(content_str), sep=None, engine='python')
                         df_temp['Source_Type'] = 'مؤشرات_عامة'
 
-                    # التنظيف
+                    # التنظيف والتوحيد
                     df_temp.columns = df_temp.columns.str.strip()
                     df_temp.rename(columns=COLUMN_MAPPING, inplace=True)
                     df_temp = df_temp.loc[:, ~df_temp.columns.duplicated()]
 
+                    # فلترة الرياض
                     if 'المدينة' in df_temp.columns:
                         df_temp['المدينة'] = df_temp['المدينة'].astype(str).str.strip()
                         df_temp = df_temp[df_temp['المدينة'] == 'الرياض']
                     
+                    # تنظيف الأرقام
                     for col in ['السعر', 'المساحة']:
                         if col in df_temp.columns:
                             df_temp[col] = df_temp[col].astype(str).str.replace(',', '').str.replace(r'[^\d.]', '', regex=True)
@@ -119,6 +122,7 @@ class RealEstateBot:
                     if 'نوع_العقار_الخام' not in df_temp.columns:
                         df_temp['نوع_العقار_الخام'] = "غير محدد"
 
+                    # اختيار الأعمدة النهائية
                     cols = ['الحي', 'السعر', 'المساحة', 'سعر_المتر', 'نوع_العقار_الخام', 'Source_File', 'Source_Type', 'اسم_المطور']
                     final_cols = [c for c in cols if c in df_temp.columns]
                     
@@ -126,10 +130,12 @@ class RealEstateBot:
                     self.log(f"   ✅ تم: {len(df_temp)} صف")
 
                 except Exception as e:
-                    self.log(f"⛔ خطأ: {e}")
+                    self.log(f"⛔ خطأ في الملف: {e}")
 
             if all_data:
                 total_df = pd.concat(all_data, ignore_index=True)
+                
+                # التحليل الذكي للنوع
                 district_medians = total_df.groupby('الحي')['سعر_المتر'].median().to_dict()
 
                 def classify(row):
@@ -141,8 +147,10 @@ class RealEstateBot:
                     
                     if 'تجاري' in raw: return "أرض (تجاري)"
                     if 'زراعي' in raw: return "أرض (زراعي)"
+                    
                     area, ppm, dist = row['المساحة'], row['سعر_المتر'], row['الحي']
                     if area < 200: return "مبني (شقة)"
+                    
                     avg = district_medians.get(dist, 0)
                     if avg > 0 and ppm > (avg * 1.5) and area < 900: return "مبني (فيلا/بيت)"
                     return "أرض"
