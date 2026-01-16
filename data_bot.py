@@ -32,16 +32,14 @@ class RealEstateBot:
         self.log_messages.append(msg)
 
     def get_creds(self):
-        # 1. البحث عن الملف محلياً (للاستخدام في Codespace)
+        # 1. البحث عن الملف محلياً
         if os.path.exists('credentials.json'):
             return service_account.Credentials.from_service_account_file('credentials.json', scopes=SCOPES)
-        
-        # 2. البحث في أسرار Streamlit (للاستخدام بعد النشر)
+        # 2. البحث في أسرار Streamlit
         elif 'gcp_service_account' in st.secrets:
             return service_account.Credentials.from_service_account_info(st.secrets['gcp_service_account'], scopes=SCOPES)
-        
         else:
-            raise FileNotFoundError("لم يتم العثور على ملف credentials.json ولا على الأسرار في Streamlit Cloud")
+            raise FileNotFoundError("لم يتم العثور على ملف credentials.json ولا على الأسرار")
 
     def load_data_from_drive(self):
         all_data = []
@@ -68,7 +66,6 @@ class RealEstateBot:
                     except:
                         content_str = content_bytes.decode('utf-16')
 
-                    # تحديد نوع الملف
                     is_developer_file = any(x in file['name'].lower() for x in ['dev', 'مطور', 'brochure', 'projects'])
                     
                     if is_developer_file:
@@ -99,17 +96,15 @@ class RealEstateBot:
                         df_temp = pd.read_csv(io.StringIO(content_str), sep=None, engine='python')
                         df_temp['Source_Type'] = 'مؤشرات_عامة'
 
-                    # التنظيف والتوحيد
+                    # التنظيف
                     df_temp.columns = df_temp.columns.str.strip()
                     df_temp.rename(columns=COLUMN_MAPPING, inplace=True)
                     df_temp = df_temp.loc[:, ~df_temp.columns.duplicated()]
 
-                    # فلترة الرياض
                     if 'المدينة' in df_temp.columns:
                         df_temp['المدينة'] = df_temp['المدينة'].astype(str).str.strip()
                         df_temp = df_temp[df_temp['المدينة'] == 'الرياض']
                     
-                    # تنظيف الأرقام
                     for col in ['السعر', 'المساحة']:
                         if col in df_temp.columns:
                             df_temp[col] = df_temp[col].astype(str).str.replace(',', '').str.replace(r'[^\d.]', '', regex=True)
@@ -122,7 +117,6 @@ class RealEstateBot:
                     if 'نوع_العقار_الخام' not in df_temp.columns:
                         df_temp['نوع_العقار_الخام'] = "غير محدد"
 
-                    # اختيار الأعمدة النهائية
                     cols = ['الحي', 'السعر', 'المساحة', 'سعر_المتر', 'نوع_العقار_الخام', 'Source_File', 'Source_Type', 'اسم_المطور']
                     final_cols = [c for c in cols if c in df_temp.columns]
                     
@@ -130,12 +124,11 @@ class RealEstateBot:
                     self.log(f"   ✅ تم: {len(df_temp)} صف")
 
                 except Exception as e:
-                    self.log(f"⛔ خطأ في الملف: {e}")
+                    self.log(f"⛔ خطأ: {e}")
 
             if all_data:
                 total_df = pd.concat(all_data, ignore_index=True)
                 
-                # التحليل الذكي للنوع
                 district_medians = total_df.groupby('الحي')['سعر_المتر'].median().to_dict()
 
                 def classify(row):
