@@ -1,119 +1,153 @@
+import streamlit as st
 import pandas as pd
-import numpy as np
-import time
-from datetime import datetime
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 import io
-from googleapiclient.http import MediaIoBaseDownload
+import csv
+import os
+import json
+
+# إعدادات الاتصال
+FOLDER_ID = "1kgzKj9sn8pQVjr78XcN7_iF5KLmflwME"
+SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
+
+# قاموس الترجمة
+COLUMN_MAPPING = {
+    'السعر': 'السعر', 'مبلغ الصفقة': 'السعر', 'Price': 'السعر', 'قيمة الصفقات': 'السعر', 'سعر الوحدة': 'السعر',
+    'المساحة': 'المساحة', 'المساحة بالأمتار': 'المساحة', 'Area': 'المساحة', 'مساحة الوحدة': 'المساحة',
+    'الحي': 'الحي', 'اسم الحي': 'الحي', 'District Name': 'الحي', 'الموقع': 'الحي',
+    'نوع العقار': 'نوع_العقار_الخام', 'تصنيف العقار': 'نوع_العقار_الخام', 'الوحدة': 'نوع_العقار_الخام', 'النوع': 'نوع_العقار_الخام',
+    'المدينة': 'المدينة', 
+    'المطور': 'اسم_المطور', 'اسم المشروع': 'اسم_المشروع'
+}
 
 class RealEstateBot:
     def __init__(self):
-        self.mode = "SIMULATION"
+        self.log_messages = []
+        self.creds = self.get_creds()
+        self.service = build('drive', 'v3', credentials=self.creds)
+        self.df = self.load_data_from_drive()
+
+    def log(self, msg):
+        print(msg)
+        self.log_messages.append(msg)
+
+    def get_creds(self):
+        # 1. المحاولة الأولى: البحث عن الملف في الجهاز (للاستخدام المحلي)
+        if os.path.exists('credentials.json'):
+            return service_account.Credentials.from_service_account_file('credentials.json', scopes=SCOPES)
         
-        # 👇👇 (تأكد أن كود المجلد حقك موجود هنا) 👇👇
-        FOLDER_ID = "1kgzKj9sn8pQVjr78XcN7_iF5KLmflwME" 
-        # ------------------------------------------------
+        # 2. المحاولة الثانية: البحث في أسرار Streamlit (للاستخدام بعد الرفع)
+        elif 'gcp_service_account' in st.secrets:
+            # تحويل البيانات من صيغة TOML/Dict إلى كائن Credentials
+            return service_account.Credentials.from_service_account_info(st.secrets['gcp_service_account'], scopes=SCOPES)
+        
+        else:
+            raise FileNotFoundError("لم يتم العثور على ملف credentials.json ولا على الأسرار في Streamlit Cloud")
+
+    def load_data_from_drive(self):
+        all_data = []
+        self.log("📂 جاري البحث عن الملفات...")
         
         try:
-            print("🔄 جاري الاتصال بمجلد Google Drive...")
-            
-            SCOPES = ['https://www.googleapis.com/auth/drive']
-            creds = service_account.Credentials.from_service_account_file('credentials.json', scopes=SCOPES)
-            service = build('drive', 'v3', credentials=creds)
-            
-            results = service.files().list(
-                q=f"'{FOLDER_ID}' in parents and mimeType='text/csv' and trashed=false",
+            results = self.service.files().list(
+                q=f"'{FOLDER_ID}' in parents and trashed=false",
                 fields="files(id, name)").execute()
-            items = results.get('files', [])
+            files = results.get('files', [])
 
-            if not items:
-                print("⚠️ المجلد فارغ!")
-                self.df = pd.DataFrame()
+            for file in files:
+                if not file['name'].lower().endswith('.csv'):
+                    continue
+                
+                self.log(f"🔹 معالجة الملف: {file['name']}")
+                
+                try:
+                    request = self.service.files().get_media(fileId=file['id'])
+                    content_bytes = request.execute()
+                    
+                    try:
+                        content_str = content_bytes.decode('utf-8-sig')
+                    except:
+                        content_str = content_bytes.decode('utf-16')
+
+                    is_developer_file = any(x in file['name'].lower() for x in ['dev', 'مطور', 'brochure', 'projects'])
+                    
+                    if is_developer_file:
+                        self.log("   🌟 بيانات مطورين")
+                        df_temp = pd.read_csv(io.StringIO(content_str), sep=None, engine='python')
+                        df_temp['Source_Type'] = 'سوق_حالي (مطورين)'
+                    
+                    elif 'MOJ' in file['name'].upper():
+                        self.log("   ⚖️ بيانات عدل")
+                        f = io.StringIO(content_str)
+                        reader = csv.reader(f, delimiter=';')
+                        header_row = None; data_rows = []
+                        for row in reader:
+                            clean_row = [str(cell).strip() for cell in row]
+                            if 'السعر' in clean_row and 'الحي' in clean_row:
+                                header_row = clean_row; continue
+                            if header_row and len(clean_row) >= len(header_row):
+                                data_rows.append(clean_row[:len(header_row)])
+                        
+                        if header_row: df_temp = pd.DataFrame(data_rows, columns=header_row)
+                        else: self.log("❌ فشل MOJ"); continue
+                        df_temp['Source_Type'] = 'صفقات_منفذة (العدل)'
+
+                    else:
+                        self.log("   ℹ️ مؤشرات عامة")
+                        df_temp = pd.read_csv(io.StringIO(content_str), sep=None, engine='python')
+                        df_temp['Source_Type'] = 'مؤشرات_عامة'
+
+                    # التنظيف
+                    df_temp.columns = df_temp.columns.str.strip()
+                    df_temp.rename(columns=COLUMN_MAPPING, inplace=True)
+                    df_temp = df_temp.loc[:, ~df_temp.columns.duplicated()]
+
+                    if 'المدينة' in df_temp.columns:
+                        df_temp['المدينة'] = df_temp['المدينة'].astype(str).str.strip()
+                        df_temp = df_temp[df_temp['المدينة'] == 'الرياض']
+                    
+                    for col in ['السعر', 'المساحة']:
+                        if col in df_temp.columns:
+                            df_temp[col] = df_temp[col].astype(str).str.replace(',', '').str.replace(r'[^\d.]', '', regex=True)
+                            df_temp[col] = pd.to_numeric(df_temp[col], errors='coerce')
+
+                    df_temp.dropna(subset=['السعر', 'المساحة'], inplace=True)
+                    df_temp['سعر_المتر'] = df_temp['السعر'] / df_temp['المساحة']
+                    df_temp['Source_File'] = file['name']
+                    
+                    if 'نوع_العقار_الخام' not in df_temp.columns:
+                        df_temp['نوع_العقار_الخام'] = "غير محدد"
+
+                    cols = ['الحي', 'السعر', 'المساحة', 'سعر_المتر', 'نوع_العقار_الخام', 'Source_File', 'Source_Type', 'اسم_المطور']
+                    final_cols = [c for c in cols if c in df_temp.columns]
+                    
+                    all_data.append(df_temp[final_cols])
+                    self.log(f"   ✅ تم: {len(df_temp)} صف")
+
+                except Exception as e:
+                    self.log(f"⛔ خطأ: {e}")
+
+            if all_data:
+                total_df = pd.concat(all_data, ignore_index=True)
+                district_medians = total_df.groupby('الحي')['سعر_المتر'].median().to_dict()
+
+                def classify(row):
+                    raw = str(row.get('نوع_العقار_الخام', '')).strip().lower()
+                    if row.get('Source_Type') == 'سوق_حالي (مطورين)':
+                        if 'شقة' in raw: return 'مبني (شقة - مطور)'
+                        if 'فيلا' in raw: return 'مبني (فيلا - مطور)'
+                        if 'أرض' in raw: return 'أرض (مطور)'
+                    
+                    if 'تجاري' in raw: return "أرض (تجاري)"
+                    if 'زراعي' in raw: return "أرض (زراعي)"
+                    area, ppm, dist = row['المساحة'], row['سعر_المتر'], row['الحي']
+                    if area < 200: return "مبني (شقة)"
+                    avg = district_medians.get(dist, 0)
+                    if avg > 0 and ppm > (avg * 1.5) and area < 900: return "مبني (فيلا/بيت)"
+                    return "أرض"
+
+                total_df['نوع_العقار'] = total_df.apply(classify, axis=1)
+                return total_df
             else:
-                all_dfs = []
-                for item in items:
-                    print(f"📥 قراءة الملف: {item['name']}...")
-                    request = service.files().get_media(fileId=item['id'])
-                    fh = io.BytesIO()
-                    downloader = MediaIoBaseDownload(fh, request)
-                    done = False
-                    while done is False:
-                        status, done = downloader.next_chunk()
-                    
-                    fh.seek(0)
-                    df_temp = pd.read_csv(fh, header=7)
-                    
-                    # 🆕 حركة ذكية: تسجيل اسم الملف في عمود جديد
-                    df_temp['Source_File'] = item['name']
-                    
-                    all_dfs.append(df_temp)
-
-                self.df = pd.concat(all_dfs, ignore_index=True)
-                
-                # تنظيف البيانات
-                self.df.columns = self.df.columns.str.strip()
-                if 'الحي' in self.df.columns:
-                    self.df['الحي'] = self.df['الحي'].astype(str).str.strip()
-                
-                self.mode = "REAL_DATA"
-                print(f"✅ تم! الروبوت جاهز ومعه {len(self.df)} صفقة من {len(items)} ملفات.")
-
-        except Exception as e:
-            print(f"⚠️ خطأ: {e}")
-            self.df = pd.DataFrame()
-
-    def generate_links(self, city, district):
-        clean_dist = district.replace("حي", "").strip()
-        return {
-            "srem": f"https://srem.moj.gov.sa/transactions-info?region_id=1&city_id=4&district_name={clean_dist}",
-            "aqar": f"https://sa.aqar.fm/شقق-للبيع/{city}/{clean_dist}"
-        }
-
-    def fetch_data(self, district):
-        time.sleep(0.5)
-        clean_dist = district.replace("حي", "").strip()
-        ts = datetime.now().strftime("%Y-%m-%d")
-        
-        land_price = 0; built_price = 0; status = "failed"; source_note = ""
-
-        if self.mode == "REAL_DATA" and not self.df.empty:
-            try:
-                mask = (self.df['الحي'] == clean_dist) & (self.df['تصنيف العقار'] == 'سكني')
-                data = self.df[mask].copy()
-                
-                if not data.empty:
-                    # 🆕 استخراج اسم الملف الذي جاءت منه البيانات
-                    # (يأخذ أول ملف وجد فيه البيانات)
-                    file_name = data['Source_File'].iloc[0]
-                    source_note = f"ملف: {file_name}"
-
-                    data['السعر'] = pd.to_numeric(data['السعر'], errors='coerce')
-                    data['المساحة'] = pd.to_numeric(data['المساحة'], errors='coerce')
-                    data['سعر_المتر'] = data['السعر'] / data['المساحة']
-                    data = data[(data['سعر_المتر'] > 500) & (data['سعر_المتر'] < 35000)]
-                    
-                    lands = data[data['المساحة'] >= 250]
-                    if not lands.empty: land_price = int(lands['سعر_المتر'].median())
-                    
-                    apts = data[data['المساحة'] < 250]
-                    if not apts.empty: built_price = int(apts['سعر_المتر'].median())
-
-                    if land_price > 0 or built_price > 0:
-                        status = "success"
-                        # منطق التعويض
-                        if land_price == 0 and built_price > 0: land_price = int(built_price * 0.45)
-                        if built_price == 0 and land_price > 0: built_price = int(land_price * 1.8)
-            except: pass
-
-        if status == "failed":
-            land_price = 4000; built_price = 6500; source_note = "بيانات تقديرية (محاكاة)"; status = "success"
-
-        return {
-            "status": status, "timestamp": ts, "msg": source_note,
-            "summary": {"exec_avg": land_price, "built_avg": built_price, "ticket_cap": int(built_price * 130)},
-            "records": [
-                {"البيان": "سعر متر الأرض", "السعر": land_price, "المصدر": source_note},
-                {"البيان": "سعر متر الشقة", "السعر": built_price, "المصدر": source_note}
-            ]
-        }
+                return pd.DataFrame()
