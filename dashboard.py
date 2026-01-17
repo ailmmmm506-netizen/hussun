@@ -24,6 +24,7 @@ COLUMN_MAPPING = {
 class RealEstateBot:
     def __init__(self):
         self.log_messages = []
+        self.files_found_count = 0  # عداد للملفات الموجودة في الدرايف
         self.creds = self.get_creds()
         self.service = build('drive', 'v3', credentials=self.creds)
         self.df = self.load_data_from_drive()
@@ -51,9 +52,12 @@ class RealEstateBot:
                 q=f"'{FOLDER_ID}' in parents and trashed=false",
                 fields="files(id, name)").execute()
             files = results.get('files', [])
+            self.files_found_count = len(files) # حفظ العدد الكلي
 
             for file in files:
+                # تجاهل الملفات غير CSV
                 if not file['name'].lower().endswith('.csv'):
+                    self.log(f"تجاهل الملف (ليس CSV): {file['name']}")
                     continue
                 
                 try:
@@ -65,6 +69,7 @@ class RealEstateBot:
 
                     is_dev = any(x in file['name'].lower() for x in ['dev', 'مطور', 'brochure', 'projects'])
                     
+                    # قراءة الملف حسب نوعه
                     if is_dev:
                         df_temp = pd.read_csv(io.StringIO(content_str), sep=None, engine='python')
                         df_temp['Source_Type'] = 'سوق_حالي (مطورين)'
@@ -83,31 +88,39 @@ class RealEstateBot:
                         df_temp = pd.read_csv(io.StringIO(content_str), sep=None, engine='python')
                         df_temp['Source_Type'] = 'مؤشرات_عامة'
 
+                    # توحيد الأعمدة
                     df_temp.columns = df_temp.columns.str.strip()
                     df_temp.rename(columns=COLUMN_MAPPING, inplace=True)
                     df_temp = df_temp.loc[:, ~df_temp.columns.duplicated()]
 
+                    # فلترة الرياض (اختياري - تأكد أن الملفات تحتوي عمود مدينة)
                     if 'المدينة' in df_temp.columns:
                         df_temp['المدينة'] = df_temp['المدينة'].astype(str).str.strip()
                         df_temp = df_temp[df_temp['المدينة'] == 'الرياض']
 
+                    # تنظيف الأرقام
                     for col in ['السعر', 'المساحة']:
                         if col in df_temp.columns:
                             df_temp[col] = df_temp[col].astype(str).str.replace(',', '').str.replace(r'[^\d.]', '', regex=True)
                             df_temp[col] = pd.to_numeric(df_temp[col], errors='coerce')
 
+                    # حذف الصفوف الفارغة وحساب المتر
                     df_temp.dropna(subset=['السعر', 'المساحة'], inplace=True)
-                    df_temp['سعر_المتر'] = df_temp['السعر'] / df_temp['المساحة']
-                    # حفظ اسم الملف للعرض في الإحصائيات
-                    df_temp['Source_File'] = file['name'] 
-                    
-                    if 'نوع_العقار_الخام' not in df_temp.columns: df_temp['نوع_العقار_الخام'] = "غير محدد"
-                    
-                    cols = ['الحي', 'السعر', 'المساحة', 'سعر_المتر', 'نوع_العقار_الخام', 'Source_File', 'Source_Type', 'اسم_المطور']
-                    all_data.append(df_temp[[c for c in cols if c in df_temp.columns]])
+                    if not df_temp.empty:
+                        df_temp['سعر_المتر'] = df_temp['السعر'] / df_temp['المساحة']
+                        df_temp['Source_File'] = file['name'] # حفظ اسم الملف
+                        
+                        if 'نوع_العقار_الخام' not in df_temp.columns: df_temp['نوع_العقار_الخام'] = "غير محدد"
+                        
+                        cols = ['الحي', 'السعر', 'المساحة', 'سعر_المتر', 'نوع_العقار_الخام', 'Source_File', 'Source_Type', 'اسم_المطور']
+                        found_cols = [c for c in cols if c in df_temp.columns]
+                        all_data.append(df_temp[found_cols])
+                        self.log(f"✅ تم سحب {len(df_temp)} صفقة من: {file['name']}")
+                    else:
+                        self.log(f"⚠️ ملف فارغ بعد التنظيف: {file['name']}")
 
                 except Exception as e:
-                    self.log(f"خطأ في ملف {file['name']}: {e}")
+                    self.log(f"❌ خطأ في قراءة ملف {file['name']}: {e}")
 
             if all_data:
                 total_df = pd.concat(all_data, ignore_index=True)
@@ -140,32 +153,32 @@ st.set_page_config(page_title="المحلل العقاري الذكي", layout="
 
 # ---------------- القائمة الجانبية (مع إحصائيات الملفات) ----------------
 with st.sidebar:
-    st.header("⚙️ التحكم")
+    st.header("⚙️ لوحة التحكم")
     if st.button("🔄 تحديث البيانات", use_container_width=True, type="primary"):
         st.cache_data.clear()
         st.rerun()
     
-    # هنا الإضافة الجديدة: إظهار مصادر البيانات
+    # عرض حالة الملفات
     if 'bot' in st.session_state and hasattr(st.session_state.bot, 'df'):
-        df_stats = st.session_state.bot.df
-        if not df_stats.empty:
-            st.divider()
-            st.markdown("### 📁 مصادر البيانات")
-            st.markdown("عدد الصفقات في كل ملف:")
-            
-            # حساب عدد الصفقات لكل ملف
-            file_counts = df_stats['Source_File'].value_counts().reset_index()
-            file_counts.columns = ['اسم الملف', 'عدد الصفقات']
-            
-            # عرضها كجدول صغير
-            st.dataframe(file_counts, hide_index=True, use_container_width=True)
+        bot = st.session_state.bot
+        st.divider()
+        st.markdown(f"**📂 الملفات في الدرايف:** {bot.files_found_count}")
+        
+        if not bot.df.empty:
+            st.markdown("### 📊 تفاصيل البيانات المسحوبة")
+            # جدول يوضح كل ملف وكم صفقة أخذنا منه
+            file_stats = bot.df['Source_File'].value_counts().reset_index()
+            file_stats.columns = ['اسم الملف', 'عدد الصفقات']
+            st.dataframe(file_stats, hide_index=True, use_container_width=True)
+        else:
+            st.error("لم يتم سحب أي بيانات! تأكد من أسماء الأعمدة في ملفاتك.")
 
 # ---------------- الشاشة الرئيسية ----------------
-st.title("🧐 مدقق البيانات العقارية (النسخة الموحدة)")
+st.title("🧐 مدقق البيانات العقارية")
 
 # تشغيل الروبوت
 if 'bot' not in st.session_state:
-    with st.spinner("جاري الاتصال بقاعدة البيانات..."):
+    with st.spinner("جاري الاتصال وسحب البيانات من جميع الملفات..."):
         try:
             st.session_state.bot = RealEstateBot()
         except Exception as e:
@@ -175,23 +188,23 @@ if 'bot' in st.session_state and hasattr(st.session_state.bot, 'df'):
     df = st.session_state.bot.df
     
     if df.empty:
-        st.warning("⚠️ لا توجد بيانات. تأكد من صحة المفاتيح والملفات.")
+        st.warning("⚠️ لا توجد بيانات. راجع القائمة الجانبية للتفاصيل.")
     else:
         # الفلترة
-        st.markdown("### 🧹 فلترة البيانات")
+        st.markdown("### 🧹 فلترة الأسعار")
         c1, c2 = st.columns(2)
-        with c1: min_p = st.number_input("أقل سعر متر:", value=500, step=100)
-        with c2: max_p = st.number_input("أعلى سعر متر:", value=25000, step=1000)
+        with c1: min_p = st.number_input("أقل سعر للمتر:", value=500, step=100)
+        with c2: max_p = st.number_input("أعلى سعر للمتر:", value=25000, step=1000)
 
         clean_df = df[(df['سعر_المتر'] >= min_p) & (df['سعر_المتر'] <= max_p)].copy()
         
         st.divider()
-        st.markdown("### 🔍 البحث والتحليل")
+        st.markdown("### 🔍 تحليل الأحياء")
         
         sc1, sc2 = st.columns([3, 1])
         search = sc1.text_input("اسم الحي:", "الملقا")
         
-        if sc2.button("عرض 📊", use_container_width=True, type="primary") or search:
+        if sc2.button("تحليل 📊", use_container_width=True, type="primary") or search:
             res = clean_df[clean_df['الحي'].astype(str).str.contains(search, na=False)]
             
             if res.empty:
@@ -206,5 +219,9 @@ if 'bot' in st.session_state and hasattr(st.session_state.bot, 'df'):
                 m3.metric("مباني", f"{len(b_df):,}")
                 m4.metric("متوسط مبنى", f"{b_df['سعر_المتر'].median():,.0f}")
                 
-                # عرض المصدر (اسم الملف) في الجدول الرئيسي أيضاً
-                st.dataframe(res[['الحي', 'نوع_العقار', 'المساحة', 'السعر', 'سعر_المتر', 'Source_File']].style.format({'السعر':'{:,.0f}', 'سعر_المتر':'{:,.0f}'}), use_container_width=True)
+                # الجدول التفصيلي مع عمود اسم الملف
+                st.markdown("#### تفاصيل الصفقات:")
+                st.dataframe(
+                    res[['الحي', 'نوع_العقار', 'المساحة', 'السعر', 'سعر_المتر', 'Source_File']].style.format({'السعر':'{:,.0f}', 'سعر_المتر':'{:,.0f}'}), 
+                    use_container_width=True
+                )
