@@ -3,152 +3,94 @@ import pandas as pd
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 import io
-import csv
 import os
 
-# إعدادات الاتصال
 FOLDER_ID = "1kgzKj9sn8pQVjr78XcN7_iF5KLmflwME"
 SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
 
-# قاموس الترجمة وتوحيد الأسماء
 COLUMN_MAPPING = {
-    'السعر': 'السعر', 'مبلغ الصفقة': 'السعر', 'Price': 'السعر', 'قيمة الصفقات': 'السعر', 'سعر الوحدة': 'السعر',
-    'المساحة': 'المساحة', 'المساحة بالأمتار': 'المساحة', 'Area': 'المساحة', 'مساحة الوحدة': 'المساحة',
+    'قيمة الصفقات': 'السعر', 'السعر': 'السعر', 'مبلغ الصفقة': 'السعر', 'Price': 'السعر',
+    'المساحة M2': 'المساحة', 'المساحة': 'المساحة', 'المساحة بالأمتار': 'المساحة', 'Area': 'المساحة',
     'الحي': 'الحي', 'اسم الحي': 'الحي', 'District Name': 'الحي', 'الموقع': 'الحي',
-    'نوع العقار': 'نوع_العقار_الخام', 'تصنيف العقار': 'نوع_العقار_الخام', 'الوحدة': 'نوع_العقار_الخام', 'النوع': 'نوع_العقار_الخام',
-    'المدينة': 'المدينة', 
-    'المطور': 'اسم_المطور', 'اسم المشروع': 'اسم_المشروع'
+    'المدينة': 'المدينة', 'City': 'المدينة', 'المنطقة': 'المدينة',
+    'نوع العقار': 'نوع_العقار_الخام', 'تصنيف العقار': 'نوع_العقار_الخام', 'الوحدة': 'نوع_العقار_الخام',
+    'عدد الصكوك': 'عدد_الصكوك', 'المطور': 'اسم_المطور'
 }
 
 class RealEstateBot:
     def __init__(self):
-        self.log_messages = []
         self.creds = self.get_creds()
         self.service = build('drive', 'v3', credentials=self.creds)
         self.df = self.load_data_from_drive()
 
-    def log(self, msg):
-        print(msg)
-        self.log_messages.append(msg)
-
     def get_creds(self):
-        # 1. البحث عن الملف محلياً
-        if os.path.exists('credentials.json'):
-            return service_account.Credentials.from_service_account_file('credentials.json', scopes=SCOPES)
-        # 2. البحث في أسرار Streamlit
-        elif 'gcp_service_account' in st.secrets:
+        if 'gcp_service_account' in st.secrets:
             return service_account.Credentials.from_service_account_info(st.secrets['gcp_service_account'], scopes=SCOPES)
-        else:
-            raise FileNotFoundError("لم يتم العثور على ملف credentials.json ولا على الأسرار")
+        elif os.path.exists('credentials.json'):
+            return service_account.Credentials.from_service_account_file('credentials.json', scopes=SCOPES)
+        return None
 
     def load_data_from_drive(self):
         all_data = []
-        self.log("📂 جاري البحث عن الملفات...")
-        
+        if not self.creds: return pd.DataFrame()
         try:
-            results = self.service.files().list(
-                q=f"'{FOLDER_ID}' in parents and trashed=false",
-                fields="files(id, name)").execute()
+            results = self.service.files().list(q=f"'{FOLDER_ID}' in parents and trashed=false", fields="files(id, name)").execute()
             files = results.get('files', [])
-
             for file in files:
-                if not file['name'].lower().endswith('.csv'):
-                    continue
-                
-                self.log(f"🔹 معالجة الملف: {file['name']}")
-                
+                if not file['name'].lower().endswith('.csv'): continue
                 try:
                     request = self.service.files().get_media(fileId=file['id'])
                     content_bytes = request.execute()
+                    try: content_str = content_bytes.decode('utf-8-sig')
+                    except: content_str = content_bytes.decode('utf-16')
                     
-                    try:
-                        content_str = content_bytes.decode('utf-8-sig')
-                    except:
-                        content_str = content_bytes.decode('utf-16')
-
-                    is_developer_file = any(x in file['name'].lower() for x in ['dev', 'مطور', 'brochure', 'projects'])
+                    lines = content_str.splitlines()
+                    header_idx = 0; sep = ','
+                    for i, line in enumerate(lines[:50]):
+                        if any(x in line for x in ['المساحة', 'السعر', 'Price', 'Area']):
+                            header_idx = i; sep = ';' if ';' in line else '\t' if '\t' in line else ','; break
                     
-                    if is_developer_file:
-                        self.log("   🌟 بيانات مطورين")
-                        df_temp = pd.read_csv(io.StringIO(content_str), sep=None, engine='python')
-                        df_temp['Source_Type'] = 'سوق_حالي (مطورين)'
+                    df_temp = pd.read_csv(io.StringIO(content_str), sep=sep, header=header_idx, engine='python')
                     
-                    elif 'MOJ' in file['name'].upper():
-                        self.log("   ⚖️ بيانات عدل")
-                        f = io.StringIO(content_str)
-                        reader = csv.reader(f, delimiter=';')
-                        header_row = None; data_rows = []
-                        for row in reader:
-                            clean_row = [str(cell).strip() for cell in row]
-                            if 'السعر' in clean_row and 'الحي' in clean_row:
-                                header_row = clean_row; continue
-                            if header_row and len(clean_row) >= len(header_row):
-                                data_rows.append(clean_row[:len(header_row)])
-                        
-                        if header_row: 
-                            df_temp = pd.DataFrame(data_rows, columns=header_row)
-                        else: 
-                            self.log("❌ فشل MOJ"); continue
-                        df_temp['Source_Type'] = 'صفقات_منفذة (العدل)'
+                    is_dev = any(x in file['name'].lower() for x in ['dev', 'مطور'])
+                    source_type = 'مطورين' if is_dev else 'عام'
+                    if 'MOJ' in file['name'].upper() or 'عدد الصكوك' in df_temp.columns: source_type = 'عدل'
 
-                    else:
-                        self.log("   ℹ️ مؤشرات عامة")
-                        df_temp = pd.read_csv(io.StringIO(content_str), sep=None, engine='python')
-                        df_temp['Source_Type'] = 'مؤشرات_عامة'
-
-                    # التنظيف
                     df_temp.columns = df_temp.columns.str.strip()
                     df_temp.rename(columns=COLUMN_MAPPING, inplace=True)
                     df_temp = df_temp.loc[:, ~df_temp.columns.duplicated()]
 
-                    if 'المدينة' in df_temp.columns:
-                        df_temp['المدينة'] = df_temp['المدينة'].astype(str).str.strip()
-                        df_temp = df_temp[df_temp['المدينة'] == 'الرياض']
-                    
-                    for col in ['السعر', 'المساحة']:
-                        if col in df_temp.columns:
+                    if 'السعر' in df_temp.columns and 'المساحة' in df_temp.columns:
+                        for col in ['السعر', 'المساحة']:
                             df_temp[col] = df_temp[col].astype(str).str.replace(',', '').str.replace(r'[^\d.]', '', regex=True)
                             df_temp[col] = pd.to_numeric(df_temp[col], errors='coerce')
-
-                    df_temp.dropna(subset=['السعر', 'المساحة'], inplace=True)
-                    df_temp['سعر_المتر'] = df_temp['السعر'] / df_temp['المساحة']
-                    df_temp['Source_File'] = file['name']
-                    
-                    if 'نوع_العقار_الخام' not in df_temp.columns:
-                        df_temp['نوع_العقار_الخام'] = "غير محدد"
-
-                    cols = ['الحي', 'السعر', 'المساحة', 'سعر_المتر', 'نوع_العقار_الخام', 'Source_File', 'Source_Type', 'اسم_المطور']
-                    final_cols = [c for c in cols if c in df_temp.columns]
-                    
-                    all_data.append(df_temp[final_cols])
-                    self.log(f"   ✅ تم: {len(df_temp)} صف")
-
-                except Exception as e:
-                    self.log(f"⛔ خطأ: {e}")
+                        
+                        df_temp.dropna(subset=['السعر', 'المساحة'], inplace=True)
+                        df_temp = df_temp[df_temp['المساحة'] > 0]
+                        df_temp['سعر_المتر'] = df_temp['السعر'] / df_temp['المساحة']
+                        df_temp['Source_File'] = file['name']
+                        df_temp['Source_Type'] = source_type
+                        if 'الحي' in df_temp.columns: df_temp['الحي'] = df_temp['الحي'].astype(str).str.strip()
+                        for c in ['نوع_العقار_الخام', 'اسم_المطور', 'عدد_الصكوك']: 
+                            if c not in df_temp.columns: df_temp[c] = "غير محدد"
+                        
+                        cols = ['الحي', 'السعر', 'المساحة', 'سعر_المتر', 'نوع_العقار_الخام', 'Source_File', 'Source_Type', 'اسم_المطور', 'عدد_الصكوك']
+                        all_data.append(df_temp[[c for c in cols if c in df_temp.columns]])
+                except: pass
 
             if all_data:
                 total_df = pd.concat(all_data, ignore_index=True)
-                
-                district_medians = total_df.groupby('الحي')['سعر_المتر'].median().to_dict()
-
+                medians = {} if 'الحي' not in total_df.columns else total_df.groupby('الحي')['سعر_المتر'].median().to_dict()
                 def classify(row):
                     raw = str(row.get('نوع_العقار_الخام', '')).strip().lower()
-                    if row.get('Source_Type') == 'سوق_حالي (مطورين)':
-                        if 'شقة' in raw: return 'مبني (شقة - مطور)'
-                        if 'فيلا' in raw: return 'مبني (فيلا - مطور)'
-                        if 'أرض' in raw: return 'أرض (مطور)'
-                    
-                    if 'تجاري' in raw: return "أرض (تجاري)"
-                    if 'زراعي' in raw: return "أرض (زراعي)"
-                    
-                    area, ppm, dist = row['المساحة'], row['سعر_المتر'], row['الحي']
-                    if area < 200: return "مبني (شقة)"
-                    
-                    avg = district_medians.get(dist, 0)
-                    if avg > 0 and ppm > (avg * 1.5) and area < 900: return "مبني (فيلا/بيت)"
+                    if row.get('Source_Type') == 'مطورين': return 'مبني (شقة - مطور)' if 'شقة' in raw else 'مبني (فيلا - مطور)' if 'فيلا' in raw else 'أرض (مطور)'
+                    if 'أرض' in raw: return "أرض"
+                    if 'شقة' in raw: return "مبني (شقة)"
+                    area, ppm, dist = row.get('المساحة',0), row.get('سعر_المتر',0), row.get('الحي','')
+                    if area < 250: return "مبني (شقة)"
+                    if medians.get(dist, 0) > 0 and ppm > (medians.get(dist)*1.5) and area < 900: return "مبني (فيلا/بيت)"
                     return "أرض"
-
                 total_df['نوع_العقار'] = total_df.apply(classify, axis=1)
                 return total_df
-            else:
-                return pd.DataFrame()
+            return pd.DataFrame()
+        except: return pd.DataFrame()
