@@ -239,4 +239,43 @@ if 'bot' in st.session_state and hasattr(st.session_state.bot, 'df'):
         with col2: max_p = st.number_input("أعلى سعر للمتر:", 50000, value=50000, step=1000)
 
         # تطبيق الفلتر
-        clean_df = df[(df['س
+        clean_df = df[(df['سعر_المتر'] >= min_p) & (df['سعر_المتر'] <= max_p)].copy()
+        
+        st.divider()
+        st.markdown("### 🔍 نتائج التحليل")
+        
+        c_search, c_btn = st.columns([4, 1])
+        search_q = c_search.text_input("ابحث عن حي:", "الملقا")
+        run_search = c_btn.button("بحث 📊", type="primary", use_container_width=True)
+        
+        if run_search or search_q:
+            # فلترة الحي
+            res = clean_df[clean_df['الحي'].str.contains(search_q, na=False)]
+            
+            if res.empty:
+                st.info(f"لا توجد صفقات لحي '{search_q}' ضمن النطاق السعري المحدد.")
+            else:
+                # تقسيم النتائج
+                lands = res[res['نوع_العقار'].str.contains('أرض')]
+                buildings = res[res['نوع_العقار'].str.contains('مبني')]
+                
+                # بطاقات الأرقام
+                k1, k2, k3, k4 = st.columns(4)
+                k1.metric("عدد الأراضي", f"{len(lands):,}")
+                k2.metric("متوسط متر الأرض", f"{lands['سعر_المتر'].median():,.0f}")
+                k3.metric("عدد المباني", f"{len(buildings):,}")
+                k4.metric("متوسط متر المبنى", f"{buildings['سعر_المتر'].median():,.0f}")
+                
+                st.markdown("#### 📋 تفاصيل الصفقات")
+                # ترتيب الأعمدة للعرض
+                display_cols = ['الحي', 'نوع_العقار', 'المساحة', 'السعر', 'سعر_المتر', 'عدد_الصكوك', 'Source_File']
+                final_display = [c for c in display_cols if c in res.columns]
+                
+                st.dataframe(
+                    res[final_display].sort_values('سعر_المتر').style.format({
+                        'السعر': '{:,.0f}', 
+                        'سعر_المتر': '{:,.0f}',
+                        'المساحة': '{:,.2f}'
+                    }),
+                    use_container_width=True
+                )
