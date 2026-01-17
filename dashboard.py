@@ -7,7 +7,7 @@ import csv
 import os
 
 # ==========================================
-# 1. إعدادات الروبوت (كانت سابقاً في data_bot)
+# 1. كود الروبوت (المحرك)
 # ==========================================
 FOLDER_ID = "1kgzKj9sn8pQVjr78XcN7_iF5KLmflwME"
 SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
@@ -98,7 +98,9 @@ class RealEstateBot:
 
                     df_temp.dropna(subset=['السعر', 'المساحة'], inplace=True)
                     df_temp['سعر_المتر'] = df_temp['السعر'] / df_temp['المساحة']
-                    df_temp['Source_File'] = file['name']
+                    # حفظ اسم الملف للعرض في الإحصائيات
+                    df_temp['Source_File'] = file['name'] 
+                    
                     if 'نوع_العقار_الخام' not in df_temp.columns: df_temp['نوع_العقار_الخام'] = "غير محدد"
                     
                     cols = ['الحي', 'السعر', 'المساحة', 'سعر_المتر', 'نوع_العقار_الخام', 'Source_File', 'Source_Type', 'اسم_المطور']
@@ -136,15 +138,32 @@ class RealEstateBot:
 # ==========================================
 st.set_page_config(page_title="المحلل العقاري الذكي", layout="wide", page_icon="🏢")
 
+# ---------------- القائمة الجانبية (مع إحصائيات الملفات) ----------------
 with st.sidebar:
     st.header("⚙️ التحكم")
     if st.button("🔄 تحديث البيانات", use_container_width=True, type="primary"):
         st.cache_data.clear()
         st.rerun()
+    
+    # هنا الإضافة الجديدة: إظهار مصادر البيانات
+    if 'bot' in st.session_state and hasattr(st.session_state.bot, 'df'):
+        df_stats = st.session_state.bot.df
+        if not df_stats.empty:
+            st.divider()
+            st.markdown("### 📁 مصادر البيانات")
+            st.markdown("عدد الصفقات في كل ملف:")
+            
+            # حساب عدد الصفقات لكل ملف
+            file_counts = df_stats['Source_File'].value_counts().reset_index()
+            file_counts.columns = ['اسم الملف', 'عدد الصفقات']
+            
+            # عرضها كجدول صغير
+            st.dataframe(file_counts, hide_index=True, use_container_width=True)
 
+# ---------------- الشاشة الرئيسية ----------------
 st.title("🧐 مدقق البيانات العقارية (النسخة الموحدة)")
 
-# تشغيل الروبوت (بدون استيراد خارجي)
+# تشغيل الروبوت
 if 'bot' not in st.session_state:
     with st.spinner("جاري الاتصال بقاعدة البيانات..."):
         try:
@@ -187,5 +206,5 @@ if 'bot' in st.session_state and hasattr(st.session_state.bot, 'df'):
                 m3.metric("مباني", f"{len(b_df):,}")
                 m4.metric("متوسط مبنى", f"{b_df['سعر_المتر'].median():,.0f}")
                 
-                st.dataframe(res[['الحي', 'نوع_العقار', 'المساحة', 'السعر', 'سعر_المتر', 'Source_Type']].style.format({'السعر':'{:,.0f}', 'سعر_المتر':'{:,.0f}'}), use_container_width=True)
-                
+                # عرض المصدر (اسم الملف) في الجدول الرئيسي أيضاً
+                st.dataframe(res[['الحي', 'نوع_العقار', 'المساحة', 'السعر', 'سعر_المتر', 'Source_File']].style.format({'السعر':'{:,.0f}', 'سعر_المتر':'{:,.0f}'}), use_container_width=True)
