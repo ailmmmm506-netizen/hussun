@@ -18,27 +18,18 @@ st.markdown("""
 
 # --- دالة التنظيف الذكي (Smart Cleaning) ---
 def get_clean_stats(df_input, col='سعر_المتر'):
-    """
-    تقوم هذه الدالة بحذف القيم الشاذة (أعلى 10% وأقل 10%) 
-    لإعطاء متوسط سعري دقيق يعكس واقع السوق.
-    """
     if df_input.empty: return 0, 0, 0
     
-    # 1. استبعاد القيم الصفرية أو السالبة
-    clean_df = df_input[df_input[col] > 100].copy() # نفترض أن المتر لا يقل عن 100 ريال
-    
+    clean_df = df_input[df_input[col] > 100].copy()
     if clean_df.empty: return 0, 0, 0
 
-    # 2. حساب الحدود (Quantiles) لاستبعاد الشواذ
-    low_limit = clean_df[col].quantile(0.10) # استبعاد أرخص 10% (غالباً صفقات عائلية)
-    high_limit = clean_df[col].quantile(0.90) # استبعاد أغلى 10% (غالباً أخطاء إدخال)
+    low_limit = clean_df[col].quantile(0.10)
+    high_limit = clean_df[col].quantile(0.90)
     
-    # 3. الفلترة النهائية
     final_df = clean_df[(clean_df[col] >= low_limit) & (clean_df[col] <= high_limit)]
     
     if final_df.empty: return 0, 0, 0
     
-    # إرجاع: المتوسط (Median)، أقل سعر حقيقي، أعلى سعر حقيقي
     return final_df[col].median(), final_df[col].min(), final_df[col].max()
 
 # --- التأكد من الاتصال ---
@@ -80,10 +71,11 @@ with st.container():
     
     districts = sorted(df['الحي'].unique()) if 'الحي' in df.columns else []
     
-    col1, col2, col3 = st.columns(3)
-    with col1:
+    # --- هنا كان التصحيح ---
+    c1, c2, c3 = st.columns(3) # تم توحيد الأسماء لتكون c1, c2, c3
+    with c1:
         selected_dist = st.selectbox("📍 اختر الحي", districts)
-    with col2:
+    with c2:
         land_area = st.number_input("📐 مساحة الأرض (م²)", value=375)
     with c3:
         offer_price = st.number_input("💰 سعر المتر المعروض (ريال)", value=3500)
@@ -120,20 +112,20 @@ m1, m2 = st.columns(2)
 with m1:
     st.info(f"📊 مؤشر الأراضي في {selected_dist}")
     if clean_land_price > 0:
-        c1, c2, c3 = st.columns(3)
-        c1.metric("متوسط سعر المتر (الدقيق)", f"{clean_land_price:,.0f} ريال")
-        c2.metric("أقل سعر سوقي", f"{min_land:,.0f} ريال")
-        c3.metric("أعلى سعر سوقي", f"{max_land:,.0f} ريال")
+        c1_sub, c2_sub, c3_sub = st.columns(3)
+        c1_sub.metric("متوسط سعر المتر (الدقيق)", f"{clean_land_price:,.0f} ريال")
+        c2_sub.metric("أقل سعر سوقي", f"{min_land:,.0f} ريال")
+        c3_sub.metric("أعلى سعر سوقي", f"{max_land:,.0f} ريال")
     else:
         st.warning("لا توجد صفقات أراضي كافية للتحليل الدقيق.")
 
 with m2:
     st.success(f"🏠 مؤشر المباني (الفلل/الشقق) في {selected_dist}")
     if clean_build_price > 0:
-        c1, c2, c3 = st.columns(3)
-        c1.metric("متوسط بيع المتر (شامل)", f"{clean_build_price:,.0f} ريال")
-        c2.metric("أقل سعر بيع", f"{min_build:,.0f} ريال")
-        c3.metric("أعلى سعر بيع", f"{max_build:,.0f} ريال")
+        c1_sub, c2_sub, c3_sub = st.columns(3)
+        c1_sub.metric("متوسط بيع المتر (شامل)", f"{clean_build_price:,.0f} ريال")
+        c2_sub.metric("أقل سعر بيع", f"{min_build:,.0f} ريال")
+        c3_sub.metric("أعلى سعر بيع", f"{max_build:,.0f} ريال")
     else:
         st.warning("لا توجد صفقات مباني كافية للتحليل الدقيق.")
 
