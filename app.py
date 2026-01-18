@@ -101,4 +101,112 @@ with st.container():
 # ========================================================
 
 # فصل البيانات
-lands_raw = df[(df['الحي'] == selected_dist) & (df['
+lands_raw = df[(df['الحي'] == selected_dist) & (df['نوع_العقار'].str.contains('أرض', na=False))]
+builds_raw = df[(df['الحي'] == selected_dist) & (df['نوع_العقار'].str.contains('مبني', na=False))]
+
+# --- تطبيق التنظيف الذكي للحصول على أرقام دقيقة ---
+clean_land_price, min_land, max_land = get_clean_stats(lands_raw)
+clean_build_price, min_build, max_build = get_clean_stats(builds_raw)
+
+st.markdown("---")
+
+# ========================================================
+# 3. عرض مؤشرات السوق الدقيقة (Market Benchmarks)
+# ========================================================
+st.markdown("<div class='header-style'>2️⃣ مؤشرات السوق (بعد التنظيف واستبعاد الشواذ)</div>", unsafe_allow_html=True)
+
+m1, m2 = st.columns(2)
+
+with m1:
+    st.info(f"📊 مؤشر الأراضي في {selected_dist}")
+    if clean_land_price > 0:
+        c1, c2, c3 = st.columns(3)
+        c1.metric("متوسط سعر المتر (الدقيق)", f"{clean_land_price:,.0f} ريال")
+        c2.metric("أقل سعر سوقي", f"{min_land:,.0f} ريال")
+        c3.metric("أعلى سعر سوقي", f"{max_land:,.0f} ريال")
+    else:
+        st.warning("لا توجد صفقات أراضي كافية للتحليل الدقيق.")
+
+with m2:
+    st.success(f"🏠 مؤشر المباني (الفلل/الشقق) في {selected_dist}")
+    if clean_build_price > 0:
+        c1, c2, c3 = st.columns(3)
+        c1.metric("متوسط بيع المتر (شامل)", f"{clean_build_price:,.0f} ريال")
+        c2.metric("أقل سعر بيع", f"{min_build:,.0f} ريال")
+        c3.metric("أعلى سعر بيع", f"{max_build:,.0f} ريال")
+    else:
+        st.warning("لا توجد صفقات مباني كافية للتحليل الدقيق.")
+
+st.markdown("---")
+
+# ========================================================
+# 4. تقرير الجدوى (Feasibility Report)
+# ========================================================
+st.markdown("<div class='header-style'>3️⃣ تقرير الجدوى الاقتصادية</div>", unsafe_allow_html=True)
+
+# أ. التكاليف
+base_land_cost = land_area * offer_price
+added_fees = base_land_cost * (fees_pct / 100)
+total_land_cost = base_land_cost + added_fees
+
+total_build_area = land_area * build_ratio
+total_construction_cost = total_build_area * build_cost
+
+grand_total = total_land_cost + total_construction_cost
+
+# ب. الإيرادات المتوقعة (بناءً على متوسط السوق للمباني)
+expected_revenue_conservative = land_area * clean_build_price # السيناريو الواقعي
+expected_revenue_optimistic = land_area * max_build # السيناريو المتفائل
+
+# ج. الربح
+profit = expected_revenue_conservative - grand_total
+roi = (profit / grand_total) * 100
+
+# العرض
+row1_1, row1_2 = st.columns([1, 2])
+
+with row1_1:
+    st.markdown("#### 💸 ملخص التكاليف")
+    costs_df = pd.DataFrame({
+        "البند": ["قيمة الأرض", "رسوم وضرائب", "تكلفة البناء", "الإجمالي"],
+        "المبلغ": [base_land_cost, added_fees, total_construction_cost, grand_total]
+    })
+    st.dataframe(costs_df.style.format({"المبلغ": "{:,.0f}"}), use_container_width=True)
+
+with row1_2:
+    st.markdown("#### 📈 تحليل الربحية (السيناريو الواقعي)")
+    
+    if clean_build_price > 0:
+        k1, k2, k3 = st.columns(3)
+        k1.metric("التكلفة الكلية", f"{grand_total:,.0f} ريال")
+        k2.metric("البيع المتوقع", f"{expected_revenue_conservative:,.0f} ريال")
+        k3.metric("صافي الربح", f"{profit:,.0f} ريال", delta=f"{roi:.1f}% عائد")
+        
+        # التوصية الذكية
+        if roi > 25:
+            st.success("🌟 **توصية:** فرصة ذهبية! العائد المتوقع ممتاز جداً (أعلى من 25%).")
+        elif roi > 15:
+            st.success("✅ **توصية:** مشروع جيد. العائد ضمن النطاق الصحي للتطوير (15-25%).")
+        elif roi > 0:
+            st.warning("⚠️ **توصية:** العائد منخفض. راجع تكاليف البناء أو فاوض في سعر الأرض.")
+        else:
+            st.error("⛔ **توصية:** المشروع خاسر بناءً على معطيات السوق الحالية.")
+            
+        # شريط التقدم للربح
+        st.write("هامش الربح المتوقع:")
+        st.progress(min(max(roi/100, 0.0), 1.0))
+        
+    else:
+        st.info("لا يمكن حساب الربحية لعدم وجود بيانات بيع مباني في هذا الحي.")
+
+# تقييم سعر المتر المعروض
+st.markdown("---")
+if clean_land_price > 0:
+    diff_pct = ((offer_price - clean_land_price) / clean_land_price) * 100
+    st.write(f"**تقييم سعر العرض ({offer_price}):**")
+    if diff_pct < -5:
+        st.caption(f"✅ السعر المعروض **أرخص** من متوسط السوق الدقيق بـ {abs(diff_pct):.1f}%")
+    elif diff_pct > 5:
+        st.caption(f"❌ السعر المعروض **أغلى** من متوسط السوق الدقيق بـ {diff_pct:.1f}%")
+    else:
+        st.caption("⚖️ السعر المعروض **عادل** ومطابق للسوق.")
