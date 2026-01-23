@@ -4,7 +4,7 @@ import numpy as np
 import data_bot  # المحرك
 
 # إعداد الصفحة
-st.set_page_config(page_title="المستشار العقاري", layout="wide", page_icon="🏢")
+st.set_page_config(page_title="المستشار العقاري المتقدم", layout="wide", page_icon="🏢")
 
 # --- التنسيق الجمالي ---
 st.markdown("""
@@ -20,246 +20,229 @@ st.markdown("""
     }
     .big-stat { font-size: 28px; font-weight: bold; color: #2c3e50; }
     .stat-label { font-size: 14px; color: #7f8c8d; margin-bottom: 5px; }
-    /* تحسين القائمة الجانبية */
-    [data-testid="stSidebar"] {
-        background-color: #f8f9fa;
-        border-left: 1px solid #ddd;
-    }
-    .profit-positive { color: #27ae60; font-weight: bold; font-size: 24px; }
-    .profit-negative { color: #c0392b; font-weight: bold; font-size: 24px; }
+    [data-testid="stSidebar"] { background-color: #f8f9fa; border-left: 1px solid #ddd; }
+    .metric-good { color: #27ae60; }
+    .metric-bad { color: #c0392b; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- دوال مساعدة ---
-def get_clean_stats(df_input, col='سعر_المتر'):
-    if df_input.empty: return 0, 0, 0
-    clean = df_input[df_input[col] > 100].copy()
-    if clean.empty: return 0, 0, 0
-    low, high = clean[col].quantile(0.10), clean[col].quantile(0.90)
-    final = clean[(clean[col] >= low) & (clean[col] <= high)]
-    if final.empty: return 0, 0, 0
-    return final[col].median(), final[col].min(), final[col].max()
+# --- 🧠 دالة التنظيف الإحصائي المتقدم (IQR Method) ---
+def get_advanced_stats(df_input, col='سعر_المتر'):
+    if df_input.empty: return 0, 0, 0, 0, "لا توجد بيانات"
+    
+    # 1. تنظيف أولي (استبعاد الأصفار والقيم المستحيلة)
+    clean = df_input[(df_input[col] > 100) & (df_input[col] < 100000)].copy()
+    if len(clean) < 3: return 0, 0, 0, 0, "بيانات غير كافية"
+
+    # 2. تطبيق IQR (المدى الربيعي) لعزل الشواذ بدقة
+    Q1 = clean[col].quantile(0.25)
+    Q3 = clean[col].quantile(0.75)
+    IQR = Q3 - Q1
+    
+    # تحديد الحدود المقبولة إحصائياً
+    lower_bound = Q1 - 1.5 * IQR
+    upper_bound = Q3 + 1.5 * IQR
+    
+    final_df = clean[(clean[col] >= lower_bound) & (clean[col] <= upper_bound)]
+    
+    if final_df.empty: return 0, 0, 0, 0, "تشتت عالي جداً"
+    
+    # 3. حساب جودة البيانات
+    count = len(final_df)
+    confidence = "✅ دقة عالية" if count > 15 else "⚠️ دقة متوسطة" if count > 5 else "❌ دقة منخفضة (صفقات قليلة)"
+    
+    return final_df[col].median(), final_df[col].min(), final_df[col].max(), count, confidence
 
 # --- الاتصال بالبيانات ---
 if 'bot' not in st.session_state:
-    with st.spinner("جاري الاتصال..."):
+    with st.spinner("جاري تحليل البيانات..."):
         try: st.session_state.bot = data_bot.RealEstateBot()
         except: st.error("خطأ في الاتصال")
 
 df = st.session_state.bot.df if hasattr(st.session_state.bot, 'df') else pd.DataFrame()
 
 # ========================================================
-# 🟢 القائمة الجانبية (لوحة القيادة والمدخلات)
+# 🟢 القائمة الجانبية (فلاتر دقيقة)
 # ========================================================
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2642/2642226.png", width=50)
-    st.title("إعدادات المشروع")
+    st.title("إعدادات التحليل")
     
     if st.button("🔄 تحديث البيانات", use_container_width=True):
         st.cache_data.clear()
         for key in list(st.session_state.keys()): del st.session_state[key]
         st.rerun()
-    
     st.divider()
 
     if df.empty:
         st.warning("بانتظار البيانات...")
         st.stop()
 
-    # 1. تحديد الموقع
-    st.subheader("1️⃣ الموقع والأرض")
+    # 1. الموقع
+    st.subheader("1️⃣ الموقع")
     districts_list = sorted(df['الحي'].unique()) if 'الحي' in df.columns else []
     
-    # ميزة الرابط الذكي
-    location_input = st.text_input("🔗 رابط أو اسم الحي", placeholder="بحث ذكي...")
+    location_input = st.text_input("🔗 بحث ذكي (رابط/اسم)", placeholder="لصق رابط جوجل...")
     default_ix = 0
     if location_input:
         for i, d in enumerate(districts_list):
-            if d in location_input: 
-                default_ix = i; st.toast(f"✅ تم تحديد: {d}"); break
+            if d in location_input: default_ix = i; st.toast(f"📍 {d}"); break
     
-    selected_dist = st.selectbox("📍 الحي", districts_list, index=default_ix)
+    selected_dist = st.selectbox("اختر الحي", districts_list, index=default_ix)
     
+    # 2. نوع العقار (التصفية الجوهرية) - ميزة جديدة
+    st.subheader("2️⃣ تصنيف الأرض")
+    land_type_filter = st.radio("نوع الأرض للمقارنة:", ["سكني (عام)", "تجاري / استثماري"], index=0, help="يساعد في فصل الأسعار لكي لا يختلط السكني بالتجاري")
+    
+    # منطق الفلترة بناءً على الكلمات المفتاحية في البيانات
+    keyword_filter = ""
+    if land_type_filter == "تجاري / استثماري":
+        keyword_filter = "تجاري" # يبحث عن أي شيء فيه "تجاري"
+    
+    # 3. الأرقام
     c_s1, c_s2 = st.columns(2)
     with c_s1: land_area = st.number_input("المساحة (م²)", value=375)
-    with c_s2: offer_price = st.number_input("شراء المتر", value=3500)
+    with c_s2: offer_price = st.number_input("سعر المتر المعروض", value=3500)
 
     st.divider()
-
-    # 2. التكاليف والبيع (تم التحديث هنا كما طلبت)
-    st.subheader("2️⃣ التكاليف والبيع")
-    build_cost_sqm = st.number_input("تكلفة البناء/م", value=1750, step=50)
-    
-    # الخانة الجديدة المطلوبة
-    expected_sell_sqm = st.number_input("💰 سعر البيع المتوقع للمتر", value=6500, step=100, help="سعر بيع المتر (شامل الأرض والبناء) المتوقع للوحدة الجاهزة")
-    
-    build_ratio = st.slider("نسبة البناء (%)", 1.0, 3.5, 2.3)
+    st.subheader("3️⃣ التكاليف")
+    build_cost_sqm = st.number_input("تكلفة البناء/م", value=1750)
+    expected_sell_sqm = st.number_input("سعر البيع المتوقع/م", value=6500)
+    build_ratio = st.slider("نسبة البناء", 1.0, 3.5, 2.3)
     fees_pct = st.number_input("رسوم إدارية (%)", value=8.0)
 
-    st.divider()
-
-    # تقرير المصادر
-    with st.expander("📂 مصدر البيانات"):
-        if 'Source_File' in df.columns:
-            stats = df['Source_File'].value_counts().reset_index()
-            stats.columns = ['الملف', 'العدد']
-            st.dataframe(stats, hide_index=True)
-
 # ========================================================
-# 🏭 المعالجة والحسابات
+# 🏭 المعالجة الذكية
 # ========================================================
-# 1. فلترة البيانات
-lands_raw = df[(df['الحي'] == selected_dist) & (df['نوع_العقار'].str.contains('أرض', na=False))]
-builds_raw = df[(df['الحي'] == selected_dist) & (df['نوع_العقار'].str.contains('مبني', na=False))]
-clean_land, _, _ = get_clean_stats(lands_raw)
-clean_build, _, _ = get_clean_stats(builds_raw)
+# 1. فلترة الحي
+district_df = df[df['الحي'] == selected_dist]
 
-# 2. حساب التكاليف
+# 2. فلترة النوع (سكني vs تجاري) داخل الأراضي
+# إذا اختار تجاري، نبحث عن الكلمة. إذا سكني، نستبعد التجاري قدر الإمكان
+lands_raw = district_df[district_df['نوع_العقار'].str.contains('أرض', na=False)]
+
+if land_type_filter == "تجاري / استثماري":
+    # نحاول نصيد الصفقات التجارية (غالباً سعرها عالي أو مسماها تجاري)
+    # ملاحظة: هذا يعتمد على توفر كلمة تجاري في البيانات، أو يمكننا استخدام السعر كفلتر
+    lands_filtered = lands_raw[lands_raw['نوع_العقار_الخام'].str.contains('تجاري', na=False) | (lands_raw['سعر_المتر'] > lands_raw['سعر_المتر'].median() * 1.5)]
+    if lands_filtered.empty: lands_filtered = lands_raw # رجوع للعام إذا لم نجد تصنيف دقيق
+else:
+    # سكني: نحاول استبعاد التجاري الصريح
+    lands_filtered = lands_raw[~lands_raw['نوع_العقار_الخام'].str.contains('تجاري', na=False)]
+
+# بيانات المباني (للمقارنة)
+builds_raw = district_df[district_df['نوع_العقار'].str.contains('مبني', na=False)]
+
+# 3. التحليل الإحصائي المتقدم
+clean_land, min_land, max_land, land_count, land_conf = get_advanced_stats(lands_filtered)
+clean_build, min_build, max_build, build_count, build_conf = get_advanced_stats(builds_raw)
+
+# 4. الحسابات المالية
 land_base = land_area * offer_price
-land_fees = land_base * 0.075 # 5% ضريبة + 2.5% سعي
+land_fees = land_base * 0.075 
 build_area = land_area * build_ratio
 exec_cost = build_area * build_cost_sqm
 admin_fees = exec_cost * (fees_pct / 100)
 total_project_cost = land_base + land_fees + exec_cost + admin_fees
 
-# 3. حساب الأرباح (بناءً على مدخلاتك اليدوية)
-manual_revenue = land_area * expected_sell_sqm  # إيرادك المتوقع بناء على السعر الذي أدخلته
+manual_revenue = land_area * expected_sell_sqm
 manual_profit = manual_revenue - total_project_cost
 manual_roi = (manual_profit / total_project_cost) * 100
 
 # ========================================================
-# 📑 الشاشة الرئيسية (Tabs)
+# 📑 الشاشة الرئيسية
 # ========================================================
-st.title(f"تحليل مشروع: حي {selected_dist}")
+st.title(f"تحليل العقار: {selected_dist} ({land_type_filter})")
 
-tab1, tab2, tab3, tab4 = st.tabs([
-    "1️⃣ السوق والموقع", 
-    "2️⃣ التكاليف والربحية", 
-    "3️⃣ تحليل المخاطر", 
-    "4️⃣ ملخص المستثمر"
-])
+tab1, tab2, tab3, tab4 = st.tabs(["1️⃣ جودة السوق", "2️⃣ التكاليف والربح", "3️⃣ المخاطر", "4️⃣ الملخص"])
 
-# --------------------------------------------------------
-# الشريحة 1: السوق
-# --------------------------------------------------------
+# --- الشريحة 1: جودة السوق (جديدة) ---
 with tab1:
-    col_map, col_data = st.columns([1, 2])
-    with col_map:
-        st.markdown("##### 🗺️ الموقع")
-        map_url = f"https://www.google.com/maps/search/?api=1&query={selected_dist}+الرياض"
-        st.markdown(f"[![Maps](https://upload.wikimedia.org/wikipedia/commons/thumb/a/aa/Google_Maps_icon_%282020%29.svg/80px-Google_Maps_icon_%282020%29.svg.png)]({map_url})")
-        st.caption("اضغط لفتح الخريطة")
-        
-    with col_data:
-        st.markdown("##### 📊 أسعار السوق (مقارنة بأسعارك)")
-        m1, m2 = st.columns(2)
-        with m1:
-            st.markdown("#### 🟫 الأراضي")
-            if clean_land > 0:
-                diff = ((offer_price - clean_land)/clean_land)*100
-                st.metric("متوسط السوق", f"{clean_land:,.0f}", delta=f"{diff:+.1f}% فرق سعرك", delta_color="inverse")
-            else: st.info("لا تتوفر بيانات")
-            
-        with m2:
-            st.markdown("#### 🏠 المباني (بيع)")
-            if clean_build > 0:
-                diff_sell = ((expected_sell_sqm - clean_build)/clean_build)*100
-                st.metric("متوسط السوق", f"{clean_build:,.0f}", delta=f"{diff_sell:+.1f}% فرق سعرك")
-            else: st.info("لا تتوفر بيانات")
-
-# --------------------------------------------------------
-# الشريحة 2: التكاليف والربحية (تم التعديل هنا)
-# --------------------------------------------------------
-with tab2:
-    col_cost, col_profit = st.columns([1.5, 1])
+    col_kpi, col_chart = st.columns([1, 1.5])
     
-    with col_cost:
+    with col_kpi:
+        st.markdown("#### 🧐 مصداقية السعر")
+        
+        # عرض مؤشر الثقة
+        st.info(f"مؤشر دقة بيانات الأراضي: **{land_conf}**\n\n(تم الاعتماد على {land_count} صفقة بعد استبعاد الشواذ)")
+
+        if clean_land > 0:
+            diff = ((offer_price - clean_land)/clean_land)*100
+            
+            st.metric("متوسط السوق (الواقعي)", f"{clean_land:,.0f} ريال", delta=f"{diff:+.1f}% عن سعرك", delta_color="inverse")
+            st.caption(f"النطاق السعري المقبول في الحي: من {min_land:,.0f} إلى {max_land:,.0f}")
+            
+            if offer_price > max_land:
+                st.error("⚠️ انتبه: السعر المعروض أعلى من أغلى صفقة تم رصدها في الحي!")
+            elif offer_price < min_land:
+                st.success("🔥 فرصة: السعر المعروض أقل من أدنى سعر مرصود!")
+        else:
+            st.warning("البيانات غير كافية لإعطاء متوسط سعري موثوق.")
+
+    with col_chart:
+        if clean_land > 0 and not lands_filtered.empty:
+            st.markdown("#### 📊 توزيع الصفقات في الحي")
+            # رسم بياني يوضح أين يقع سعرك مقارنة بالسوق
+            chart_data = lands_filtered[(lands_filtered['سعر_المتر'] > 0) & (lands_filtered['سعر_المتر'] < clean_land*3)]
+            
+            # نستخدم Altair أو Vega Lite بسيط عبر st.scatter_chart
+            st.scatter_chart(chart_data, x='المساحة', y='سعر_المتر', color='Source_Type', size='سعر_المتر')
+            st.caption("النقاط تمثل الصفقات الفعلية. قارن موقع نقطتك (سعرك ومساحتك) مع التكتل الموجود.")
+
+# --- الشريحة 2: التكاليف والربح ---
+with tab2:
+    c1, c2 = st.columns([1.5, 1])
+    with c1:
         st.markdown("#### 🧾 تفاصيل التكاليف")
         cost_df = pd.DataFrame([
-            {"البند": "قيمة الأرض", "التكلفة": land_base, "%": f"{(land_base/total_project_cost)*100:.1f}%"},
-            {"البند": "رسوم (ضريبة+سعي)", "التكلفة": land_fees, "%": f"{(land_fees/total_project_cost)*100:.1f}%"},
-            {"البند": "تكاليف البناء", "التكلفة": exec_cost, "%": f"{(exec_cost/total_project_cost)*100:.1f}%"},
-            {"البند": "إشراف وإدارة", "التكلفة": admin_fees, "%": f"{(admin_fees/total_project_cost)*100:.1f}%"},
-            {"البند": "🔴 الإجمالي", "التكلفة": total_project_cost, "%": "100%"}
+            {"البند": "قيمة الأرض", "التكلفة": land_base},
+            {"البند": "رسوم (ضريبة+سعي)", "التكلفة": land_fees},
+            {"البند": "تكاليف البناء", "التكلفة": exec_cost},
+            {"البند": "إشراف وإدارة", "التكلفة": admin_fees},
+            {"البند": "🔴 الإجمالي", "التكلفة": total_project_cost}
         ])
         st.dataframe(cost_df.style.format({"التكلفة": "{:,.0f}"}), use_container_width=True)
-
-    with col_profit:
-        st.markdown("#### 💰 تحليل الربحية (حسب مدخلاتك)")
-        st.markdown(f"""
-        <div style="background-color:#f9f9f9; padding:20px; border-radius:10px; border:1px solid #eee;">
-            <div style="margin-bottom:10px;">
-                <span style="color:#7f8c8d;">سعر البيع المتوقع:</span><br>
-                <span style="font-size:20px; font-weight:bold;">{manual_revenue:,.0f} ريال</span>
-            </div>
-            <div style="margin-bottom:10px;">
-                <span style="color:#7f8c8d;">صافي الربح:</span><br>
-                <span class="{'profit-positive' if manual_profit > 0 else 'profit-negative'}">{manual_profit:,.0f} ريال</span>
-            </div>
-            <div>
-                <span style="color:#7f8c8d;">العائد على الاستثمار (ROI):</span><br>
-                <span class="{'profit-positive' if manual_profit > 0 else 'profit-negative'}">{manual_roi:.1f}%</span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
         
-        # تقييم سريع
-        if manual_roi > 20: st.success("🌟 عائد ممتاز!")
-        elif manual_roi > 10: st.info("✅ عائد جيد")
-        else: st.warning("⚠️ عائد منخفض")
+    with c2:
+        st.markdown("#### 💰 نتيجتك (بناءً على سعرك)")
+        st.metric("صافي الربح المتوقع", f"{manual_profit:,.0f} ريال")
+        st.metric("العائد (ROI)", f"{manual_roi:.1f}%")
+        
+        if manual_roi < 10:
+            st.warning("العائد أقل من 10%، يعتبر مخاطرة.")
 
-# --------------------------------------------------------
-# الشريحة 3: المخاطر
-# --------------------------------------------------------
+# --- الشريحة 3: المخاطر ---
 with tab3:
-    st.markdown("#### 📉 تحليل الحساسية")
-    c1, c2 = st.columns(2)
-    with c1: duration = st.number_input("المدة (شهر)", value=14)
-    with c2: fin_rate = st.number_input("فائدة التمويل (%)", value=0.0)
-    
-    fin_cost = total_project_cost * (fin_rate/100) * (duration/12)
-    grand_total_risk = total_project_cost + fin_cost
-    
-    # استخدام السعر اليدوي كنقطة ارتكاز
-    base_sell = manual_revenue
-    
-    p_changes = [-0.1, -0.05, 0, 0.05, 0.1]
-    c_changes = [-0.1, -0.05, 0, 0.05, 0.1]
+    st.markdown("#### 📉 ماذا لو تغير السوق؟")
+    p_changes = [-0.15, -0.10, -0.05, 0, 0.05, 0.10]
     
     matrix = []
     for p in p_changes:
-        row = []
-        sell = base_sell * (1 + p)
-        for c in c_changes:
-            cost_new = (exec_cost+admin_fees) * (1 + c) + land_base + land_fees + fin_cost
-            roi = ((sell - cost_new)/cost_new)*100
-            row.append(roi)
-        matrix.append(row)
-        
-    df_risk = pd.DataFrame(matrix, index=[f"بيع {x:+.0%}" for x in p_changes], columns=[f"بناء {x:+.0%}" for x in c_changes])
-    st.dataframe(df_risk.style.background_gradient(cmap="RdYlGn", vmin=0, vmax=30).format("{:.1f}%"), use_container_width=True)
+        sell = manual_revenue * (1 + p) # تغيير في سعر البيع المتوقع
+        profit = sell - total_project_cost
+        roi = (profit/total_project_cost)*100
+        matrix.append(roi)
+    
+    df_sens = pd.DataFrame([matrix], columns=[f"{x:+.0%}" for x in p_changes], index=["نسبة الربح"])
+    st.dataframe(df_sens.style.background_gradient(cmap="RdYlGn", vmin=-10, vmax=30).format("{:.1f}%"), use_container_width=True)
+    st.caption("الجدول يوضح نسبة الربح إذا تغير سعر البيع المتوقع صعوداً أو نزولاً.")
 
-# --------------------------------------------------------
-# الشريحة 4: الملخص
-# --------------------------------------------------------
+# --- الشريحة 4: الملخص ---
 with tab4:
-    net_profit_final = manual_revenue - grand_total_risk
-    roi_final = (net_profit_final / grand_total_risk) * 100
-    
-    color = "#27ae60" if roi_final > 15 else "#f39c12" if roi_final > 0 else "#c0392b"
-    
+    color = "#27ae60" if manual_roi > 15 else "#f39c12" if manual_roi > 0 else "#c0392b"
     st.markdown(f"""
     <div class="investor-card" style="border-top-color: {color};">
-        <h2 style="color:{color};">ملخص المشروع الاستثماري</h2>
-        <p>حي {selected_dist} | المساحة {land_area}م²</p>
+        <h2 style="color:{color};">تقرير الجدوى النهائي</h2>
+        <p>حي {selected_dist} | نوع التحليل: {land_type_filter}</p>
         <hr>
         <div style="display: flex; justify-content: space-around; margin-top: 20px;">
-            <div><div class="stat-label">رأس المال</div><div class="big-stat">{grand_total_risk:,.0f}</div></div>
-            <div><div class="stat-label">الإيراد (بناءً على سعرك)</div><div class="big-stat">{manual_revenue:,.0f}</div></div>
+            <div><div class="stat-label">التكلفة الكلية</div><div class="big-stat">{total_project_cost:,.0f}</div></div>
+            <div><div class="stat-label">الربح المتوقع</div><div class="big-stat" style="color:{color};">{manual_profit:,.0f}</div></div>
+            <div><div class="stat-label">ROI</div><div class="big-stat" style="color:{color};">{manual_roi:.1f}%</div></div>
         </div>
-        <div style="display: flex; justify-content: space-around; margin-top: 20px;">
-            <div><div class="stat-label">الربح الصافي</div><div class="big-stat" style="color:{color};">{net_profit_final:,.0f}</div></div>
-            <div><div class="stat-label">ROI</div><div class="big-stat" style="color:{color};">{roi_final:.1f}%</div></div>
+        <br>
+        <div style="background:#f9f9f9; padding:10px; font-size:14px;">
+            مؤشر دقة البيانات المستخدمة في المقارنة: <b>{land_conf}</b>
         </div>
     </div>
     """, unsafe_allow_html=True)
