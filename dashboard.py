@@ -10,7 +10,6 @@ st.markdown("""
 <style>
     .big-stat { font-size: 20px; font-weight: bold; }
     [data-testid="stSidebar"] { background-color: #f8f9fa; border-left: 1px solid #ddd; }
-    /* تنسيق الجداول */
     .stDataFrame { border: 1px solid #eee; border-radius: 5px; }
 </style>
 """, unsafe_allow_html=True)
@@ -24,7 +23,7 @@ if 'bot' not in st.session_state:
 df = st.session_state.bot.df if hasattr(st.session_state.bot, 'df') else pd.DataFrame()
 
 # ========================================================
-# 🟢 القائمة الجانبية (فلتر البحث)
+# 🟢 القائمة الجانبية (فلتر البحث + ملخص المصادر)
 # ========================================================
 with st.sidebar:
     st.title("🔍 فلتر البحث")
@@ -40,7 +39,7 @@ with st.sidebar:
         st.warning("جاري سحب البيانات...")
         st.stop()
 
-    # فلتر الحي (اختياري لتسهيل العرض)
+    # فلتر الحي
     districts = sorted(df['الحي'].unique()) if 'الحي' in df.columns else []
     selected_dist = st.selectbox("تصفية حسب الحي:", ["الكل"] + districts)
     
@@ -50,26 +49,50 @@ with st.sidebar:
     else:
         filtered_df = df
 
-    # إحصائيات سريعة في السايدبار
+    # 📊 ملخص البيانات (تم التحديث هنا حسب طلبك)
     st.divider()
     st.markdown("### 📊 ملخص البيانات")
+    
+    # 1. إحصائيات عامة
     count_sold = len(filtered_df[filtered_df['Data_Category'] == 'صفقات (Sold)'])
     count_ask = len(filtered_df[filtered_df['Data_Category'] == 'عروض (Ask)'])
     st.write(f"🟢 صفقات منفذة: **{count_sold}**")
     st.write(f"🔵 عروض متاحة: **{count_ask}**")
+    
+    # 2. تفاصيل الملفات والمصادر
+    if 'Source_File' in df.columns:
+        # حساب عدد العقارات لكل ملف
+        # نستخدم df الأصلية هنا لعرض كل الملفات المسحوبة وليس المفلترة فقط
+        file_stats = df['Source_File'].value_counts().reset_index()
+        file_stats.columns = ['اسم الملف', 'العدد']
+        
+        num_files = len(file_stats)
+        st.write(f"📂 الملفات المسحوبة: **{num_files}**")
+        
+        # عرض الجدول داخل قائمة قابلة للطي (Expander) لترتيب الشكل
+        with st.expander("تفاصيل الملفات والأعداد"):
+            st.dataframe(
+                file_stats, 
+                hide_index=True, 
+                use_container_width=True,
+                column_config={
+                    "اسم الملف": st.column_config.TextColumn("الملف"),
+                    "العدد": st.column_config.ProgressColumn("البيانات", format="%d", min_value=0, max_value=int(file_stats['العدد'].max()))
+                }
+            )
 
 # ========================================================
-# 📋 المنطقة الرئيسية (الجدول المطلوب)
+# 📋 المنطقة الرئيسية (الجدول)
 # ========================================================
 st.title("📊 لوحة البيانات العقارية")
 st.caption("استعراض مباشر للبيانات من ملفات جوجل درايف")
 
-# 1. تحديد الأعمدة المطلوبة للعرض (حسب طلبك)
+# الأعمدة المطلوبة للعرض
 display_columns = [
-    'Data_Category', # نوع الملف
-    'Source_File',   # اسم الملف
+    'Data_Category', 
+    'Source_File',   
     'الحي',
-    'اسم_المطور',     # المطور
+    'اسم_المطور',     
     'السعر',
     'المساحة',
     'سعر_المتر',
@@ -77,33 +100,26 @@ display_columns = [
     'نوع_العقار'
 ]
 
-# إعادة تسمية الأعمدة للعربية في العرض
 column_rename_map = {
-    'Data_Category': 'نوع الملف (تصنيف)',
-    'Source_File': 'اسم الملف المصدري',
+    'Data_Category': 'نوع الملف',
+    'Source_File': 'اسم الملف',
     'اسم_المطور': 'المطور',
     'سعر_المتر': 'سعر المتر',
     'نوع_العقار': 'نوع العقار'
 }
 
-# 2. إنشاء التبويبات (الخانتين)
+# التبويبات
 tab_deals, tab_offers = st.tabs(["💰 الصفقات (Sold)", "🏷️ العروض (Offers)"])
 
-# --- الخانة الأولى: الصفقات ---
+# --- الصفقات ---
 with tab_deals:
     st.subheader("سجل الصفقات المتممة")
-    
-    # سحب داتا الصفقات فقط
     deals_data = filtered_df[filtered_df['Data_Category'] == 'صفقات (Sold)'].copy()
     
     if not deals_data.empty:
-        # التأكد من وجود الأعمدة قبل العرض
         final_cols = [c for c in display_columns if c in deals_data.columns]
-        
-        # تنسيق الجدول للعرض
         display_df = deals_data[final_cols].rename(columns=column_rename_map)
         
-        # عرض الجدول
         st.dataframe(
             display_df.sort_values('سعر المتر'),
             use_container_width=True,
@@ -114,23 +130,17 @@ with tab_deals:
             }
         )
     else:
-        st.info("لا توجد صفقات مسجلة في البيانات الحالية.")
+        st.info("لا توجد صفقات مسجلة.")
 
-# --- الخانة الثانية: العروض ---
+# --- العروض ---
 with tab_offers:
-    st.subheader("قائمة العروض الحالية في السوق")
-    
-    # سحب داتا العروض فقط
+    st.subheader("قائمة العروض الحالية")
     offers_data = filtered_df[filtered_df['Data_Category'] == 'عروض (Ask)'].copy()
     
     if not offers_data.empty:
-        # التأكد من وجود الأعمدة
         final_cols = [c for c in display_columns if c in offers_data.columns]
-        
-        # تنسيق الجدول
         display_df = offers_data[final_cols].rename(columns=column_rename_map)
         
-        # عرض الجدول
         st.dataframe(
             display_df.sort_values('سعر المتر'),
             use_container_width=True,
@@ -141,4 +151,4 @@ with tab_offers:
             }
         )
     else:
-        st.warning("لا توجد عروض متاحة حالياً.")
+        st.warning("لا توجد عروض متاحة.")
