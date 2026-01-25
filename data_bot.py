@@ -75,7 +75,7 @@ class RealEstateBot:
                     
                     df_temp = pd.read_csv(io.StringIO(content_str), sep=sep, header=header_idx, engine='python')
 
-                    # 3. تصنيف الملف (عروض vs صفقات)
+                    # 3. تصنيف الملف
                     fname = file['name'].lower()
                     data_cat = "عروض (Ask)" if ("عروض" in fname or "offer" in fname) else "صفقات (Sold)"
                     source_type = 'عدل' if ('MOJ' in file['name'].upper()) else ('مطورين' if any(x in fname for x in ['dev', 'مطور']) else 'عام')
@@ -86,27 +86,60 @@ class RealEstateBot:
                     df_temp = df_temp.loc[:, ~df_temp.columns.duplicated()]
 
                     # =========================================================
-                    # 🕵️‍♂️ استخراج الحي المفقود (كما اتفقنا سابقاً)
+                    # 🕵️‍♂️ تنظيف الأحياء (تم إضافة "راكز" للقائمة السوداء)
                     # =========================================================
                     if 'الحي' not in df_temp.columns: df_temp['الحي'] = None
                     if 'اسم_المشروع_الخام' not in df_temp.columns: df_temp['اسم_المشروع_الخام'] = ''
 
-                    bad_mask = df_temp['الحي'].isna() | df_temp['الحي'].astype(str).str.contains(r'جميع|All|مشروع|عام', case=False, na=False) | (df_temp['الحي'].astype(str).str.len() < 3)
+                    # قائمة الكلمات التي إذا وجدت في خانة الحي نعتبرها خانة "تالفة" ويجب إصلاحها
+                    # أضفنا "راكز" هنا 👇
+                    invalid_words = r'جميع|All|مشروع|Project|عام|راكز|Rakez'
+                    
+                    bad_mask = df_temp['الحي'].isna() | \
+                               df_temp['الحي'].astype(str).str.contains(invalid_words, case=False, na=False) | \
+                               (df_temp['الحي'].astype(str).str.len() < 3)
 
-                    # تكتيك 1: استخراج "حي كذا" من اسم المشروع
+                    # تكتيك 1: استخراج اسم الحي من "اسم المشروع"
                     def extract_with_prefix(text):
                         if pd.isna(text): return None
+                        # يبحث عن كلمة بعد "حي" أو "مخطط"
                         match = re.search(r'(?:حي|مخطط)\s+([\w\u0600-\u06FF]+)', str(text))
-                        return match.group(1).strip() if match else None
+                        if match:
+                            extracted = match.group(1).strip()
+                            # تأكد أن الاسم المستخرج ليس "راكز" أيضاً
+                            if 'راكز' in extracted or 'Rakez' in extracted: return None
+                            return extracted
+                        return None
 
                     df_temp.loc[bad_mask, 'الحي'] = df_temp.loc[bad_mask, 'اسم_المشروع_الخام'].apply(extract_with_prefix)
                     
-                    # تكتيك 2: اسم الملف كخيار أخير
+                    # تكتيك 2: البحث العكسي (إذا وجدنا أسماء أحياء صحيحة في الملف، نستخدمها لتصحيح البقية)
+                    # نعيد حساب bad_mask لأن بعض الصفوف قد تكون تصلحت
+                    bad_mask = df_temp['الحي'].isna() | df_temp['الحي'].astype(str).str.contains(invalid_words, case=False, na=False)
+                    
+                    valid_districts = df_temp.loc[~bad_mask, 'الحي'].unique()
+                    valid_districts = [d for d in valid_districts if isinstance(d, str) and len(d) > 2]
+
+                    if len(valid_districts) > 0 and bad_mask.any():
+                        pattern = '|'.join([re.escape(d) for d in valid_districts])
+                        def find_known_district(text):
+                            if pd.isna(text): return None
+                            match = re.search(pattern, str(text))
+                            return match.group(0) if match else None
+
+                        found = df_temp.loc[bad_mask, 'اسم_المشروع_الخام'].apply(find_known_district)
+                        df_temp.loc[bad_mask, 'الحي'] = found.combine_first(df_temp.loc[bad_mask, 'الحي'])
+
+                    # تكتيك 3: اسم الملف (الملاذ الأخير)
                     potential_dist_file = file['name'].replace('.csv', '').replace('.CSV', '')
                     for w in ['عروض', 'صفقات', 'Offers', 'Sold', 'الرياض', 'Riyadh', 'حي', 'District', '_', '-']:
                         potential_dist_file = potential_dist_file.replace(w, ' ')
                     
+                    # نملأ الفراغ باسم الملف
                     df_temp['الحي'] = df_temp['الحي'].fillna(potential_dist_file.strip())
+                    
+                    # تنظيف نهائي: لو اسم الملف نفسه كان فيه "راكز" بالغلط، لا نعتمد عليه كحي
+                    df_temp.loc[df_temp['الحي'].str.contains('راكز', na=False), 'الحي'] = None
                     # =========================================================
 
                     # 5. المعالجة الرقمية
@@ -140,61 +173,45 @@ class RealEstateBot:
 
             if all_data:
                 total_df = pd.concat(all_data, ignore_index=True)
-                
-                # حساب متوسط الحي (للاستنتاج في الصفقات فقط)
                 medians = {}
                 if 'الحي' in total_df.columns:
-                    # نحسب المتوسط فقط للصفقات المصنفة كأرض مبدئياً ليكون معياراً
-                    land_only = total_df[total_df['نوع_العقار_الخام'].astype(str).str.contains('أرض', na=False)]
-                    medians = land_only.groupby('الحي')['سعر_المتر'].median().to_dict()
+                    # حساب المتوسط المرجعي
+                    temp_land = total_df[total_df['نوع_العقار_الخام'].astype(str).str.contains('أرض', na=False)]
+                    if not temp_land.empty:
+                        medians = temp_land.groupby('الحي')['سعر_المتر'].median().to_dict()
 
-                # =========================================================
-                # 🧠 خوارزمية التصنيف المزدوجة (Dual Classification Logic)
-                # =========================================================
+                # 6. تصنيف العقار المزدوج
                 def classify_property(row):
                     raw = str(row.get('نوع_العقار_الخام', '')).strip().lower()
                     category = row.get('Data_Category', '')
                     
-                    # -----------------------------------
-                    # السيناريو 1: العروض (Offers)
-                    # -----------------------------------
-                    # القاعدة: خذ البيانات من الملف كما هي، وحدد النوع بدقة (دور، شقة، فيلا)
+                    # أ) العروض
                     if 'عروض' in category or 'Ask' in category:
                         if 'أرض' in raw or 'land' in raw: return "أرض"
-                        if 'دور' in raw or 'floor' in raw: return "دور"
-                        if 'شقة' in raw or 'apartment' in raw: return "شقة"
+                        if 'دور' in raw: return "دور"
+                        if 'شقة' in raw: return "شقة"
                         if any(x in raw for x in ['فيلا', 'فله', 'villa', 'بيت', 'تاون']): return "فيلا"
-                        if 'عمارة' in raw or 'building' in raw: return "عمارة"
+                        if 'عمارة' in raw: return "عمارة"
                         
-                        # إذا كان النوع فارغاً في ملف العروض، حاول الاستنتاج من المساحة كحل أخير
+                        # استنتاج للعروض الفارغة النوع
                         area = row.get('المساحة', 0)
                         if not raw or raw == 'nan' or raw == 'none':
-                            if area > 0 and area < 250: return "شقة" # افتراضي للمساحات الصغيرة
-                            if area > 250: return "فيلا" # افتراضي للمساحات الكبيرة
-                        
-                        return raw # إذا لم يتطابق، أرجع النص الأصلي كما هو
+                            if area > 0 and area < 250: return "شقة"
+                            if area > 250: return "فيلا"
+                        return raw
 
-                    # -----------------------------------
-                    # السيناريو 2: الصفقات (Deals)
-                    # -----------------------------------
-                    # القاعدة: حدد هل هو مبني أم لا (Binary Classification)
+                    # ب) الصفقات
                     else:
-                        # التصنيف الصريح
                         if 'أرض' in raw or 'land' in raw: return "أرض"
-                        if any(x in raw for x in ['فيلا', 'بيت', 'شقة', 'عمارة', 'دور', 'سكني تجاري']): return "مبني"
-
-                        # الاستنتاج الذكي (Heuristic) للصفقات المبهمة
+                        if any(x in raw for x in ['فيلا', 'بيت', 'شقة', 'عمارة', 'دور']): return "مبني"
+                        
                         area = row.get('المساحة', 0)
                         ppm = row.get('سعر_المتر', 0)
                         dist = row.get('الحي', '')
+                        avg_land = medians.get(dist, 0)
                         
-                        avg_land_price = medians.get(dist, 0)
-                        
-                        # إذا السعر أغلى من متوسط أراضي الحي بـ 50% -> غالباً مبني
-                        if avg_land_price > 0 and ppm > (avg_land_price * 1.5):
-                            return "مبني"
-                        
-                        return "أرض" # الافتراضي في الصفقات هو الأرض
+                        if avg_land > 0 and ppm > (avg_land * 1.5): return "مبني"
+                        return "أرض"
 
                 total_df['نوع_العقار'] = total_df.apply(classify_property, axis=1)
                 return total_df
