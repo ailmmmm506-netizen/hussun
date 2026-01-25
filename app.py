@@ -110,17 +110,22 @@ if app_mode == "📱 دراسة الجدوى (App)":
     
     # فصل المباني للمقارنة
     if selected_cat == "عروض (Ask)":
-        # في العروض نقارن بفلل مشابهة
         comp_builds = comp_df[comp_df['نوع_العقار'].isin(['فيلا', 'مبني (فيلا)'])]
     else:
-        # في الصفقات نقارن بالمباني
         comp_builds = comp_df[comp_df['نوع_العقار'] == 'مبني']
 
     clean_build, min_build, max_build, build_count, build_conf = get_advanced_stats(comp_builds)
 
-    # الحسابات
+    # 🛠️ [تصحيح] تعريف المتغيرات بشكل صريح هنا قبل استخدامها
     land_base = land_area * offer_price
-    total_cost = (land_base * 1.075) + (land_area * build_ratio * build_cost_sqm) * (1 + fees_pct/100)
+    # تعريف المتغيرات المفقودة
+    exec_cost = land_area * build_ratio * build_cost_sqm
+    admin_fees = exec_cost * (fees_pct / 100)
+    
+    # حساب الإجمالي
+    total_cost = (land_base * 1.075) + exec_cost + admin_fees
+    
+    # حسابات الربح
     target_profit = total_cost * (target_margin / 100)
     req_revenue = total_cost + target_profit
     req_sell_sqm = req_revenue / land_area
@@ -154,10 +159,12 @@ if app_mode == "📱 دراسة الجدوى (App)":
 
     with tab2:
         st.markdown("#### هيكل التكاليف التقديري")
+        # استخدام المتغيرات المعرفة حديثاً (exec_cost, admin_fees)
         cost_df = pd.DataFrame([
             {"البند": "قيمة الأرض (مع الضريبة)", "التكلفة": land_base * 1.05},
             {"البند": "سعي الأرض (2.5%)", "التكلفة": land_base * 0.025},
-            {"البند": "البناء والتطوير والرسوم", "التكلفة": total_cost - (land_base * 1.075)},
+            {"البند": "تكلفة البناء (تنفيذ)", "التكلفة": exec_cost},
+            {"البند": "رسوم إدارية وإشراف", "التكلفة": admin_fees},
             {"البند": "🔴 إجمالي رأس المال", "التكلفة": total_cost}
         ])
         st.dataframe(cost_df.style.format({"التكلفة": "{:,.0f}"}), use_container_width=True)
@@ -167,7 +174,6 @@ if app_mode == "📱 دراسة الجدوى (App)":
         breakeven = total_cost / land_area
         st.metric("نقطة التعادل (لا ربح ولا خسارة)", f"{breakeven:,.0f} ريال/م")
         
-        # مصفوفة بسيطة
         st.write("نسبة الربح المتوقعة عند تغيير سعر البيع:")
         changes = [-0.1, -0.05, 0, 0.05, 0.1]
         res = {}
@@ -205,32 +211,25 @@ elif app_mode == "📊 سجل البيانات (Dashboard)":
             st.dataframe(file_stats, use_container_width=True)
 
     # 2. الجدول الرئيسي
-    # فلترة الحي المختار
     dash_df = df[df['الحي'] == selected_dist].copy()
     
     if dash_df.empty:
         st.warning(f"لا توجد بيانات مسجلة لحي {selected_dist}.")
     else:
-        # تبويبات الصفقات والعروض
         t_deals, t_offers = st.tabs(["💰 الصفقات (Sold)", "🏷️ العروض (Offers)"])
         
         cols_show = ['Source_File', 'اسم_المطور', 'السعر', 'المساحة', 'سعر_المتر', 'نوع_العقار', 'الحالة', 'عدد_الغرف']
-        cols_map = {'Source_File': 'الملف', 'اسم_المطور': 'المطور', 'سعر_المتر': 'المتر', 'نوع_العقار': 'النوع'}
+        # التأكد من وجود الأعمدة قبل العرض
+        existing_cols = [c for c in cols_show if c in dash_df.columns]
         
         with t_deals:
             d_data = dash_df[dash_df['Data_Category'] == 'صفقات (Sold)']
             if not d_data.empty:
-                st.dataframe(
-                    d_data[cols_show].rename(columns=cols_map).sort_values('المتر'),
-                    use_container_width=True
-                )
+                st.dataframe(d_data[existing_cols].sort_values('سعر_المتر'), use_container_width=True)
             else: st.info("لا توجد صفقات.")
 
         with t_offers:
             o_data = dash_df[dash_df['Data_Category'] == 'عروض (Ask)']
             if not o_data.empty:
-                st.dataframe(
-                    o_data[cols_show].rename(columns=cols_map).sort_values('المتر'),
-                    use_container_width=True
-                )
+                st.dataframe(o_data[existing_cols].sort_values('سعر_المتر'), use_container_width=True)
             else: st.info("لا توجد عروض.")
