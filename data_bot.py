@@ -12,7 +12,7 @@ import re
 FOLDER_ID = "1kgzKj9sn8pQVjr78XcN7_iF5KLmflwME"
 SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
 
-# قائمة مرجعية للأحياء (للمساعدة في المطابقة)
+# قائمة الأحياء للمساعدة في الاستخراج
 KNOWN_DISTRICTS = [
     'الملقا', 'العارض', 'النرجس', 'الياسمين', 'القيروان', 'حطين', 'العقيق', 'النخيل', 
     'الصحافة', 'الربيع', 'الندى', 'الفلاح', 'الوادي', 'الغدير', 'النسيم', 'الجنادرية', 
@@ -28,13 +28,14 @@ KNOWN_DISTRICTS = [
     'القادسية', 'المعيزيلة', 'الشرق', 'طيبة', 'العماجية', 'هيت', 'بنبان', 'الوسام', 'لبن'
 ]
 
+# قاموس توحيد الأعمدة (شامل للصفقات والعروض)
 COLUMN_MAPPING = {
-    'السعر': 'السعر', 'Price': 'السعر', 'القيمة': 'السعر',
+    'السعر': 'السعر', 'Price': 'السعر', 'القيمة': 'السعر', 'قيمة الصفقة': 'السعر', 'مبلغ الصفقة': 'السعر',
     'المساحة': 'المساحة', 'Area': 'المساحة', 'مساحة': 'المساحة',
     'المدينة': 'المدينة',
-    'الحي': 'الحي', 'District': 'الحي',
+    'الحي': 'الحي', 'District': 'الحي', 'اسم الحي': 'الحي',
     'اسم المشروع': 'اسم_المشروع_الخام', 'المشروع': 'اسم_المشروع_الخام',
-    'نوع العقار': 'نوع_العقار_الخام', 'النوع': 'نوع_العقار_الخام', 'Type': 'نوع_العقار_الخام', 'تصنيف العقار': 'نوع_العقار_الخام',
+    'نوع العقار': 'نوع_العقار_الخام', 'النوع': 'نوع_العقار_الخام', 'تصنيف العقار': 'نوع_العقار_الخام',
     'المطور': 'اسم_المطور'
 }
 
@@ -56,24 +57,37 @@ class RealEstateBot:
             results = self.service.files().list(q=f"'{FOLDER_ID}' in parents and trashed=false", fields="files(id, name)").execute()
             for file in results.get('files', []):
                 fname = file['name'].lower()
-                
-                # 🛑 شرط 1: استبعاد صفقات راكز فقط (حسب طلبك)
-                # إذا الملف يحتوي على "راكز" وليس "عروض" -> تجاوز الملف
-                if 'راكز' in fname and 'عروض' not in fname and 'offer' not in fname:
-                    continue
-
                 if not fname.endswith('.csv'): continue
 
                 try:
-                    content = self.service.files().get_media(fileId=file['id']).execute().decode('utf-8-sig')
-                    sep = ';' if ';' in content.splitlines()[0] else ','
-                    df_temp = pd.read_csv(io.StringIO(content), sep=sep, engine='python')
+                    # قراءة المحتوى
+                    content_bytes = self.service.files().get_media(fileId=file['id']).execute()
+                    try: content_str = content_bytes.decode('utf-8-sig')
+                    except: content_str = content_bytes.decode('utf-16')
+
+                    # 1. البحث عن سطر العناوين (Header Detection) - هذا ما سيصلح قراءة الصفقات
+                    lines = content_str.splitlines()
+                    header_idx = 0
+                    sep = ','
                     
+                    for i, line in enumerate(lines[:50]): # نفحص أول 50 سطر
+                        # نبحث عن كلمات مفتاحية تدل على الهيدر
+                        if any(k in line for k in ['السعر', 'Price', 'قيمة', 'المساحة', 'Area']):
+                            header_idx = i
+                            sep = ';' if ';' in line else '\t' if '\t' in line else ','
+                            break
+                    
+                    # قراءة الملف من السطر الصحيح
+                    df_temp = pd.read_csv(io.StringIO(content_str), sep=sep, header=header_idx, engine='python')
+                    
+                    # توحيد الأعمدة
                     df_temp.columns = df_temp.columns.str.strip()
                     df_temp.rename(columns=COLUMN_MAPPING, inplace=True)
                     
+                    # تحديد الفئة
                     data_cat = "عروض (Ask)" if "عروض" in fname or "offer" in fname else "صفقات (Sold)"
                     
+                    # تنظيف الأرقام
                     for col in ['السعر', 'المساحة']:
                         if col in df_temp.columns:
                             df_temp[col] = pd.to_numeric(df_temp[col].astype(str).str.replace(r'[^\d.]', '', regex=True), errors='coerce')
@@ -88,47 +102,49 @@ class RealEstateBot:
                     if 'اسم_المشروع_الخام' not in df_temp.columns: df_temp['اسم_المشروع_الخام'] = ''
 
                     # =================================================
-                    # 1. استخراج الحي (المنطق المصحح للصفقات)
+                    # 1. استخراج الحي
                     # =================================================
                     def resolve_district(row):
                         current_val = str(row['الحي']).strip()
                         project_val = str(row.get('اسم_المشروع_الخام', '')).strip()
                         file_name_val = file['name']
                         
-                        # تنظيف اسم الملف لاستخدامه كحي (نحذف كلمة صفقات وعروض)
-                        # هذا يضمن أن 'صفقات_الملقا' تتحول إلى 'الملقا'
-                        clean_name = re.sub(r'(صفقات|عروض|sold|ask|offers|deals|الرياض|riyadh|\.csv)', '', file_name_val, flags=re.IGNORECASE).strip()
-                        clean_name = clean_name.replace('_', ' ').replace('-', ' ').strip()
+                        # تنظيف اسم الملف لاستخدامه كحي
+                        clean_filename = re.sub(r'(صفقات|عروض|sold|ask|offers|deals|الرياض|riyadh|\.csv)', '', file_name_val, flags=re.IGNORECASE).strip()
+                        clean_filename = clean_filename.replace('_', ' ').replace('-', ' ').strip()
 
-                        # متى نعتبر خانة الحي "فاسدة"؟
+                        # متى نعتبر خانة الحي سيئة ونحتاج للبديل؟
                         bad_indicators = ['جميع', 'All', 'مشروع', 'Project', 'عام', 'راكز', 'Rakez', 'nan', 'None', 'مخطط', 'عروض', 'صفقات']
                         is_bad = any(w in current_val for w in bad_indicators) or len(current_val) < 3
                         
                         candidate = current_val
                         
                         if is_bad:
-                            # أ) محاولة من اسم المشروع
+                            # البحث في اسم المشروع
                             found = False
                             for known in KNOWN_DISTRICTS:
                                 if known in project_val:
                                     candidate = known; found = True; break
                             
                             if not found:
-                                # ب) محاولة من اسم الملف (بحث عن حي معروف)
+                                # البحث في اسم الملف
                                 for known in KNOWN_DISTRICTS:
                                     if known in file_name_val:
                                         candidate = known; found = True; break
                                 
-                                # ج) الحل الأخير: استخدام اسم الملف "المنظف" (مهم جداً لملفات الصفقات)
-                                if not found and len(clean_name) > 2:
-                                    candidate = clean_name
+                                # استخدام اسم الملف المنظف (مهم للصفقات)
+                                if not found and len(clean_filename) > 2:
+                                    candidate = clean_filename
 
-                        # ⛔ الفلتر النهائي: نمنع فقط الكلمات السيئة الصريحة
-                        # لن نمنع كلمة 'الملقا' حتى لو جاءت من ملف صفقات
-                        blocklist = ['راكز', 'Rakez', 'عروض', 'Offers', 'صفقات', 'Sold', 'Ask', 'مخطط', 'nan']
-                        if any(w == str(candidate).strip() for w in blocklist): 
-                            return None 
+                        # 🛑 فلتر راكز: يطبق فقط على العروض (حسب طلبك)
+                        if 'Ask' in data_cat:
+                            if any(w in str(candidate).strip() for w in ['راكز', 'Rakez']):
+                                return None
                         
+                        # تنظيف عام للكلمات المتبقية
+                        if any(w == str(candidate).strip() for w in ['عروض', 'Offers', 'صفقات', 'Sold']):
+                            return None
+
                         return candidate
 
                     df_temp['الحي'] = df_temp.apply(resolve_district, axis=1)
@@ -142,9 +158,11 @@ class RealEstateBot:
                         area = row.get('المساحة', 0)
                         
                         if 'صفقات' in data_cat or 'Sold' in data_cat:
+                            # الصفقات: أرض أو مبني
                             if any(w in raw for w in ['أرض', 'land', 'راس', 'قطعة']): return "أرض"
                             return "مبني"
                         else:
+                            # العروض: التفصيل
                             if any(w in raw for w in ['أرض', 'land', 'راس', 'قطعة']): return "أرض"
                             if any(w in raw for w in ['فيلا', 'فله', 'فلل', 'villa', 'تاون', 'town', 'بنتهاوس', 'penthouse', 'دبلكس']): return "فيلا"
                             if any(w in raw for w in ['شقة', 'شقه', 'شقق', 'apartment', 'flat', 'تمليك', 'استوديو']): return "شقة"
@@ -157,7 +175,6 @@ class RealEstateBot:
 
                     df_temp['نوع_العقار'] = df_temp.apply(final_classify, axis=1)
                     
-                    # نحتفظ بالعمود الخام للفحص (Debug)
                     cols = ['Source_File', 'Data_Category', 'الحي', 'السعر', 'المساحة', 'سعر_المتر', 'نوع_العقار', 'نوع_العقار_الخام']
                     existing_cols = [c for c in cols if c in df_temp.columns]
                     all_data.append(df_temp[existing_cols])
