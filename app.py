@@ -21,8 +21,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- دالة الاتصال مع الكاش (لمنع التعليق) ---
-@st.cache_resource(show_spinner="جاري جلب البيانات من السحابة...", ttl=3600)
+# --- دالة الاتصال مع الكاش ---
+@st.cache_resource(show_spinner="جاري جلب البيانات...", ttl=3600)
 def load_bot():
     try: return data_bot.RealEstateBot()
     except: return None
@@ -37,13 +37,11 @@ with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2642/2642226.png", width=70)
     st.title("القائمة الرئيسية")
     
-    # --- مفتاح التنقل بين الصفحات ---
     app_mode = st.radio(
         "اختر القسم:", 
         ["📊 لوحة البيانات (Dashboard)", "🏗️ حاسبة التكاليف (Calculator)"],
         index=0
     )
-    
     st.divider()
 
 # ========================================================
@@ -51,89 +49,55 @@ with st.sidebar:
 # ========================================================
 if app_mode == "📊 لوحة البيانات (Dashboard)":
     
-    # --- سايدبار الداشبورد ---
     with st.sidebar:
         st.subheader("🔍 فلتر البيانات")
-        
         if st.button("🔄 تحديث البيانات", use_container_width=True):
             st.cache_data.clear()
             st.cache_resource.clear()
-            for key in list(st.session_state.keys()): del st.session_state[key]
             st.rerun()
 
         if df.empty:
             st.warning("جاري سحب البيانات...")
             st.stop()
 
-        # فلتر الحي
         districts = sorted(df['الحي'].unique()) if 'الحي' in df.columns else []
         selected_dist = st.selectbox("تصفية حسب الحي:", ["الكل"] + districts)
         
-        # تطبيق الفلتر
-        if selected_dist != "الكل":
-            filtered_df = df[df['الحي'] == selected_dist]
-        else:
-            filtered_df = df
+        if selected_dist != "الكل": filtered_df = df[df['الحي'] == selected_dist]
+        else: filtered_df = df
             
         st.divider()
-        # ملخص سريع
         c_sold = len(filtered_df[filtered_df['Data_Category'] == 'صفقات (Sold)'])
         c_ask = len(filtered_df[filtered_df['Data_Category'] == 'عروض (Ask)'])
         st.markdown(f"**📌 ملخص {selected_dist}:**")
         st.write(f"🟢 صفقات: {c_sold}")
         st.write(f"🔵 عروض: {c_ask}")
 
-    # --- المنطقة الرئيسية للداشبورد ---
     st.title(f"سجل البيانات العقارية: {selected_dist}")
     
-    # 1. إحصائيات المصادر (الملفات)
     if 'Source_File' in df.columns:
-        with st.expander("📂 تفاصيل الملفات والمصادر (اضغط للعرض)", expanded=False):
-            # نعرض إحصائيات الملفات بناءً على الفلتر المختار
+        with st.expander("📂 تفاصيل الملفات والمصادر", expanded=False):
             file_stats = filtered_df['Source_File'].value_counts().reset_index()
             file_stats.columns = ['اسم الملف', 'عدد العقارات']
-            
-            st.dataframe(
-                file_stats, 
-                use_container_width=True,
-                column_config={"عدد العقارات": st.column_config.ProgressColumn(format="%d", min_value=0, max_value=int(file_stats['عدد العقارات'].max()))}
-            )
+            st.dataframe(file_stats, use_container_width=True, column_config={"عدد العقارات": st.column_config.ProgressColumn(format="%d", max_value=int(file_stats['عدد العقارات'].max()))})
 
-    # 2. جداول البيانات
     if filtered_df.empty:
-        st.info("لا توجد بيانات مطابقة للفلتر.")
+        st.info("لا توجد بيانات مطابقة.")
     else:
         tab_deals, tab_offers = st.tabs(["💰 سجل الصفقات (Sold)", "🏷️ عروض السوق (Offers)"])
-        
-        # الأعمدة للعرض
         cols_show = ['Source_File', 'اسم_المطور', 'الحي', 'السعر', 'المساحة', 'سعر_المتر', 'نوع_العقار', 'الحالة', 'عدد_الغرف']
         cols_map = {'Source_File': 'الملف', 'اسم_المطور': 'المطور', 'سعر_المتر': 'المتر', 'نوع_العقار': 'النوع'}
-        
-        # التأكد من وجود الأعمدة
         valid_cols = [c for c in cols_show if c in filtered_df.columns]
 
         with tab_deals:
-            deals_data = filtered_df[filtered_df['Data_Category'] == 'صفقات (Sold)']
-            if not deals_data.empty:
-                st.dataframe(
-                    deals_data[valid_cols].rename(columns=cols_map).sort_values('المتر'),
-                    use_container_width=True,
-                    column_config={"السعر": st.column_config.NumberColumn(format="%d"), "المتر": st.column_config.NumberColumn(format="%d")}
-                )
-            else:
-                st.warning("لا توجد صفقات مسجلة.")
+            d_data = filtered_df[filtered_df['Data_Category'] == 'صفقات (Sold)']
+            if not d_data.empty: st.dataframe(d_data[valid_cols].rename(columns=cols_map).sort_values('المتر'), use_container_width=True)
+            else: st.warning("لا توجد صفقات.")
 
         with tab_offers:
-            offers_data = filtered_df[filtered_df['Data_Category'] == 'عروض (Ask)']
-            if not offers_data.empty:
-                st.dataframe(
-                    offers_data[valid_cols].rename(columns=cols_map).sort_values('المتر'),
-                    use_container_width=True,
-                    column_config={"السعر": st.column_config.NumberColumn(format="%d"), "المتر": st.column_config.NumberColumn(format="%d")}
-                )
-            else:
-                st.warning("لا توجد عروض مسجلة.")
-
+            o_data = filtered_df[filtered_df['Data_Category'] == 'عروض (Ask)']
+            if not o_data.empty: st.dataframe(o_data[valid_cols].rename(columns=cols_map).sort_values('المتر'), use_container_width=True)
+            else: st.warning("لا توجد عروض.")
 
 # ========================================================
 # 🏗️ القسم الثاني: حاسبة التكاليف (Calculator)
@@ -142,24 +106,22 @@ elif app_mode == "🏗️ حاسبة التكاليف (Calculator)":
     
     st.title("🏗️ حاسبة تكاليف التطوير المتقدمة")
     
-    # --- سايدبار الحاسبة (المدخلات) ---
+    # --- سايدبار الحاسبة ---
     with st.sidebar:
         st.subheader("1️⃣ الأرض")
         land_area = st.number_input("مساحة الأرض (م²)", value=375, step=25)
         land_price = st.number_input("سعر المتر (ريال)", value=3500, step=50)
         tax_pct = st.number_input("ضريبة التصرفات (%)", value=5.0)
-        comm_pct = st.number_input("السعي (%)", value=2.5)
+        comm_pct = st.number_input("سعي الشراء (%)", value=2.5)
 
         st.divider()
 
         st.subheader("2️⃣ البناء")
         build_ratio = st.slider("معامل البناء (FAR)", 1.0, 3.5, 2.3)
-        # حساب المسطح تلقائياً
         bua = land_area * build_ratio
         st.caption(f"مسطح البناء المتوقع: **{bua:,.0f} م²**")
-        
         turnkey_price = st.number_input("سعر البناء (تسليم مفتاح)/م", value=1800)
-        bone_price = st.number_input("سعر العظم (لحساب التأمين)/م", value=700)
+        bone_price = st.number_input("سعر العظم (للتأمين)/م", value=700)
         
         st.divider()
 
@@ -171,7 +133,8 @@ elif app_mode == "🏗️ حاسبة التكاليف (Calculator)":
 
         st.divider()
 
-        st.subheader("4️⃣ استراتيجية البيع")
+        st.subheader("4️⃣ التسويق والاستراتيجية")
+        marketing_pct = st.number_input("نسبة التسويق والعمولات (%)", value=2.5, help="تحسب كنسبة من إجمالي تكلفة المشروع كميزانية تقديرية")
         is_offplan = st.checkbox("بيع على الخارطة (Off-plan)?", value=False)
         
         wafi_fees = 0
@@ -189,36 +152,28 @@ elif app_mode == "🏗️ حاسبة التكاليف (Calculator)":
     total_construction_cost = bua * turnkey_price
     total_bone_cost = bua * bone_price
     
-    # 3. الرسوم
-    malath_insurance = total_bone_cost * 0.01  # 1% من العظم
+    # 3. الرسوم والخدمات
+    malath_insurance = total_bone_cost * 0.01
     services_total = num_units * services_cost_per_unit
     
-    # 4. الطوارئ
-    contingency_val = (total_construction_cost + services_total) * 0.02 # 2% احتياطي
+    # 4. الطوارئ (2%)
+    sub_total_hard = total_land_cost + total_construction_cost + services_total + permits_cost + design_fees + wafi_fees
+    contingency_val = sub_total_hard * 0.02 
     
-    # 5. الإجمالي
-    grand_total_cost = (
-        total_land_cost + 
-        total_construction_cost + 
-        malath_insurance + 
-        services_total + 
-        permits_cost + 
-        design_fees + 
-        wafi_fees + 
-        contingency_val
-    )
+    # 5. التسويق (الجديد) 📣
+    # نحسبها كنسبة من (التكاليف المباشرة + الطوارئ) لتكوين ميزانية
+    marketing_budget = (sub_total_hard + contingency_val) * (marketing_pct / 100)
+    
+    # 6. الإجمالي النهائي
+    grand_total_cost = sub_total_hard + contingency_val + marketing_budget
     
     cost_per_built_meter = grand_total_cost / bua
 
     # --- عرض النتائج ---
 
-    # تنبيه الاستراتيجية
-    if is_offplan:
-        st.warning("⚠️ وضع التحليل: **بيع على الخارطة** (تم احتساب رسوم وافي)")
-    else:
-        st.success("✅ وضع التحليل: **تطوير تقليدي** (بيع بعد الإتمام)")
+    if is_offplan: st.warning("⚠️ وضع التحليل: **بيع على الخارطة**")
+    else: st.success("✅ وضع التحليل: **تطوير تقليدي**")
 
-    # الكروت العلوية
     c1, c2, c3 = st.columns(3)
     with c1: st.metric("إجمالي التكلفة", f"{grand_total_cost:,.0f} ريال")
     with c2: st.metric("تكلفة المتر (على المسطح)", f"{cost_per_built_meter:,.0f} ريال")
@@ -226,24 +181,22 @@ elif app_mode == "🏗️ حاسبة التكاليف (Calculator)":
 
     st.divider()
 
-    # الجدول والرسم
     col_table, col_chart = st.columns([1.5, 1])
     
     with col_table:
         st.subheader("📑 تفاصيل الفاتورة")
         
-        # تجهيز البيانات للجدول
         breakdown = [
-            {"البند": "قيمة الأرض الأساسية", "التكلفة": base_land_cost},
-            {"البند": f"ضريبة ({tax_pct}%) + سعي ({comm_pct}%)", "التكلفة": land_adds},
+            {"البند": "قيمة الأرض (مع الضريبة والسعي)", "التكلفة": total_land_cost},
             {"البند": "تكلفة البناء (تسليم مفتاح)", "التكلفة": total_construction_cost},
             {"البند": "تأمين ملاذ (1% من العظم)", "التكلفة": malath_insurance},
             {"البند": f"خدمات ({num_units} عدادات)", "التكلفة": services_total},
             {"البند": "رخص + تصميم وإشراف", "التكلفة": permits_cost + design_fees},
+            {"البند": f"تسويق وعمولات بيع ({marketing_pct}%)", "التكلفة": marketing_budget}, # البند الجديد
             {"البند": "احتياطي طوارئ (2%)", "التكلفة": contingency_val},
         ]
         if is_offplan:
-            breakdown.append({"البند": "⭐ رسوم وافي وأمين حساب", "التكلفة": wafi_fees})
+            breakdown.append({"البند": "رسوم وافي وأمين حساب", "التكلفة": wafi_fees})
             
         df_cost = pd.DataFrame(breakdown)
         df_cost['الوزن'] = (df_cost['التكلفة'] / grand_total_cost)
@@ -259,20 +212,9 @@ elif app_mode == "🏗️ حاسبة التكاليف (Calculator)":
         
     with col_chart:
         st.subheader("🍰 توزيع التكاليف")
-        st.caption("أين تذهب السيولة؟")
-        # تحضير الرسم البياني
         chart_data = df_cost.set_index("البند")
         st.bar_chart(chart_data['التكلفة'])
 
-    # نصائح ختامية
     st.divider()
-    if is_offplan:
-        st.markdown(f"""
-        ### 💡 ميزة الخارطة:
-        رغم وجود رسوم إضافية بقيمة **{wafi_fees:,.0f} ريال**، إلا أنك لن تحتاج لضخ كامل تكلفة البناء ({total_construction_cost:,.0f} ريال) من جيبك، بل ستمولها من دفعات العملاء.
-        """)
-    else:
-        st.markdown(f"""
-        ### 💡 التحدي في التقليدي:
-        يجب عليك توفير كامل السيولة **({grand_total_cost:,.0f} ريال)**. تأكد من قدرتك المالية أو جهز خطة تمويل بنكية لتغطية البناء.
-        """)
+    st.info(f"💡 تم رصد ميزانية تسويقية قدرها **{marketing_budget:,.0f} ريال**. هذا المبلغ يغطي عادةً عمولات الوسطاء والحملات الإعلانية عند بدء البيع.")
+    
