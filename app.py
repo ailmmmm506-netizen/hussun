@@ -38,7 +38,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# 2. تهيئة الذاكرة (Session State) لحفظ البيانات بين الصفحات
+# 2. تهيئة الذاكرة (Session State)
 # ---------------------------------------------------------
 defaults = {
     'land_area': 375, 'land_price': 3500, 'tax_pct': 5.0, 'saei_pct': 2.5,
@@ -158,17 +158,16 @@ with st.sidebar:
         st.rerun()
 
 # =========================================================
-# 🏗️ التطبيق 1: الحاسبة والدراسة (تم تحديثه ليحفظ البيانات)
+# 🏗️ التطبيق 1: الحاسبة والدراسة
 # =========================================================
 if app_mode == "🏗️ الحاسبة والدراسة":
     
     st.title("🏗️ دراسة الجدوى الشاملة")
     
-    # --- أ) المدخلات (تستخدم Session State للحفظ) ---
+    # --- أ) المدخلات ---
     with st.sidebar:
         st.header("1️⃣ الموقع")
         options = sorted(df['الحي'].astype(str).unique()) if not df.empty else []
-        # تحديد الحي المختار سابقاً إن وجد
         idx = 0
         if st.session_state.calc_dist in options: idx = options.index(st.session_state.calc_dist)
         st.session_state.calc_dist = st.selectbox("حي المشروع:", options, index=idx)
@@ -198,27 +197,21 @@ if app_mode == "🏗️ الحاسبة والدراسة":
     # --- ب) محرك الحسابات ---
     bua = st.session_state.land_area * st.session_state.build_ratio
     
-    # تكاليف الأرض
     base_land = st.session_state.land_area * st.session_state.land_price
     land_total = base_land * (1 + (st.session_state.tax_pct + st.session_state.saei_pct)/100)
     
-    # تكاليف البناء
     build_total = bua * st.session_state.turnkey_price
     malath = (bua * st.session_state.bone_price) * 0.01 
     
-    # تكاليف أخرى
     services_total = st.session_state.units * st.session_state.services
     sub_total = land_total + build_total + malath + services_total + st.session_state.permits + st.session_state.wafi_fees
     
-    # طوارئ وتسويق
     contingency = sub_total * 0.02 
     marketing = (sub_total + contingency) * (st.session_state.marketing_pct / 100)
     
-    # الإجمالي
     grand_total = sub_total + contingency + marketing
     cost_sqm = grand_total / bua 
 
-    # حفظ النتائج المهمة للتقرير
     st.session_state.grand_total = grand_total
     st.session_state.cost_sqm = cost_sqm
 
@@ -253,7 +246,7 @@ if app_mode == "🏗️ الحاسبة والدراسة":
         st.bar_chart(df_cost.set_index("البند")['التكلفة'])
 
     # =========================================================
-    # 🧠 د) ماسح السوق (كما كان سابقاً)
+    # 🧠 د) ماسح السوق
     # =========================================================
     st.markdown("---")
     st.header(f"📊 مؤشرات السوق في حي {st.session_state.calc_dist}")
@@ -263,35 +256,39 @@ if app_mode == "🏗️ الحاسبة والدراسة":
     if market_df.empty:
         st.warning(f"لا توجد عروض بيع مسجلة حالياً لحي {st.session_state.calc_dist} للمقارنة.")
     else:
-        # التقسيم
         villas = market_df[market_df['نوع_العقار'] == 'فيلا']
         apts   = market_df[market_df['نوع_العقار'] == 'شقة']
         floors = market_df[market_df['نوع_العقار'] == 'دور']
         general = market_df[market_df['نوع_العقار'] != 'أرض']
 
-        # المتوسطات
         p_villa, n_villa = get_clean_median(villas)
         p_apt, n_apt     = get_clean_median(apts)
         p_floor, n_floor = get_clean_median(floors)
         p_gen, n_gen     = get_clean_median(general)
 
-        # الكروت
         col1, col2, col3, col4 = st.columns(4)
+        
         with col1:
             st.markdown(f'<div class="market-card"><h3>🏠 الفلل</h3><h2>{p_villa:,.0f}</h2><div class="stat-label">عدد العروض: {n_villa}</div></div>', unsafe_allow_html=True)
-            if n_villa > 0: with st.expander("تفاصيل"): st.dataframe(villas[['السعر', 'المساحة', 'سعر_المتر']], use_container_width=True)
-        
+            if n_villa > 0:
+                with st.expander("تفاصيل الفلل"):
+                    st.dataframe(villas[['السعر', 'المساحة', 'سعر_المتر']], use_container_width=True)
+
         with col2:
             st.markdown(f'<div class="market-card"><h3>🏢 الشقق</h3><h2>{p_apt:,.0f}</h2><div class="stat-label">عدد العروض: {n_apt}</div></div>', unsafe_allow_html=True)
-            if n_apt > 0: with st.expander("تفاصيل"): st.dataframe(apts[['السعر', 'المساحة', 'سعر_المتر']], use_container_width=True)
+            if n_apt > 0:
+                with st.expander("تفاصيل الشقق"):
+                    st.dataframe(apts[['السعر', 'المساحة', 'سعر_المتر']], use_container_width=True)
 
         with col3:
             st.markdown(f'<div class="market-card"><h3>🏘️ الأدوار</h3><h2>{p_floor:,.0f}</h2><div class="stat-label">عدد العروض: {n_floor}</div></div>', unsafe_allow_html=True)
+            if n_floor > 0:
+                with st.expander("تفاصيل الأدوار"):
+                    st.dataframe(floors[['السعر', 'المساحة', 'سعر_المتر']], use_container_width=True)
 
         with col4:
             st.markdown(f'<div class="market-card" style="border-top-color: #f1c40f;"><h3>📈 العام</h3><h2>{p_gen:,.0f}</h2><div class="stat-label">إجمالي العروض: {n_gen}</div></div>', unsafe_allow_html=True)
 
-        # الجدوى
         st.divider()
         st.subheader("💡 جدوى المشروع (مقارنة بالسوق)")
         def show_feasibility(label, market_price):
@@ -313,22 +310,20 @@ if app_mode == "🏗️ الحاسبة والدراسة":
             show_feasibility("المتوسط العام 📈", p_gen)
 
 # =========================================================
-# 📑 التطبيق 2: تقرير المستثمر (الصفحة الجديدة)
+# 📑 التطبيق 2: تقرير المستثمر
 # =========================================================
 elif app_mode == "📑 تقرير المستثمر (PDF)":
     st.title("📑 إصدار التقرير الاستثماري")
     
-    # 1. إعدادات التقرير
     with st.expander("⚙️ بيانات التقرير والعنوان", expanded=True):
         c1, c2 = st.columns(2)
         st.session_state.project_name = c1.text_input("اسم المشروع", st.session_state.project_name)
         st.session_state.developer_name = c2.text_input("اسم المطور", st.session_state.developer_name)
 
-    # 2. تجهيز البيانات والرسوم البيانية للتقرير
     market_df = df[(df['الحي'] == st.session_state.calc_dist) & (df['Data_Category'].str.contains('Ask', na=False))]
     p_apt, _ = get_clean_median(market_df[market_df['نوع_العقار'] == 'شقة'])
     
-    # Chart 1: Breakdown
+    # Chart 1
     fig1, ax1 = plt.subplots(figsize=(5, 3))
     land_v = st.session_state.land_area * st.session_state.land_price
     build_v = st.session_state.land_area * st.session_state.build_ratio * st.session_state.turnkey_price
@@ -336,21 +331,19 @@ elif app_mode == "📑 تقرير المستثمر (PDF)":
     ax1.pie([land_v, build_v, rest_v], labels=['Land', 'Build', 'Other'], autopct='%1.1f%%', colors=['#3498db', '#e74c3c', '#95a5a6'])
     ax1.set_title("Cost Breakdown")
 
-    # Chart 2: Benchmark
+    # Chart 2
     fig2, ax2 = plt.subplots(figsize=(5, 3))
     ax2.bar(['My Cost', 'Market (Apt)'], [st.session_state.get('cost_sqm', 0), p_apt], color=['#2ecc71', '#3498db'])
     ax2.set_title("Competitiveness (SAR/SQM)")
     
-    st.write("### معاينة الرسوم البيانية في التقرير:")
+    st.write("### معاينة الرسوم البيانية:")
     c_g1, c_g2 = st.columns(2)
     with c_g1: st.pyplot(fig1)
     with c_g2: st.pyplot(fig2)
 
     st.divider()
     
-    # 3. زر التحميل
     if st.button("🖨️ تحميل التقرير (PDF)", type="primary"):
-        # تجهيز البيانات
         report_data = {
             'project_name': st.session_state.project_name,
             'land_area': st.session_state.land_area,
@@ -364,19 +357,17 @@ elif app_mode == "📑 تقرير المستثمر (PDF)":
         st.download_button("📥 تنزيل الملف", data=pdf_bytes, file_name="Feasibility_Report.pdf", mime="application/pdf")
 
 # =========================================================
-# 📊 التطبيق 3: لوحة البيانات (القديمة)
+# 📊 التطبيق 3: لوحة البيانات
 # =========================================================
 elif app_mode == "📊 لوحة البيانات (Dashboard)":
     if df.empty: st.stop()
     
-    # فلاتر
     districts = sorted(df['الحي'].astype(str).unique())
     selected_dist = st.sidebar.selectbox("تصفية حسب الحي:", ["الكل"] + districts)
     view_df = df if selected_dist == "الكل" else df[df['الحي'] == selected_dist]
     
     st.title(f"سجل البيانات العقارية: {selected_dist}")
     
-    # إحصائيات سريعة
     c1, c2 = st.columns(2)
     with c1: st.metric("عدد الصفقات (Sold)", len(view_df[view_df['Data_Category'].str.contains('Sold', na=False)]))
     with c2: st.metric("عدد العروض (Ask)", len(view_df[view_df['Data_Category'].str.contains('Ask', na=False)]))
