@@ -9,19 +9,34 @@ st.set_page_config(page_title="المطور العقاري الذكي", layout="
 st.markdown("""
 <style>
     /* تنسيق الكروت */
+    .market-card { background-color: #e8f4f8; padding: 20px; border-radius: 10px; border-top: 5px solid #3498db; margin-top: 20px; }
     .cost-card { background-color: #f8f9fa; padding: 20px; border-radius: 10px; border-left: 5px solid #2ecc71; margin-bottom: 10px; }
-    .wafi-card { background-color: #fff3cd; padding: 20px; border-radius: 10px; border-left: 5px solid #ffc107; margin-bottom: 10px; }
-    .stat-box { background-color: #ffffff; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); text-align: center; }
-    
-    /* تحسين السايدبار */
     [data-testid="stSidebar"] { background-color: #f8f9fa; border-left: 1px solid #ddd; }
-    
-    /* تنسيق الجداول */
     .stDataFrame { border: 1px solid #eee; border-radius: 5px; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- دالة الاتصال مع الكاش ---
+# --- دالة الإحصاء المتقدمة (لاستبعاد القيم الشاذة) ---
+def get_clean_stats(df_input, col='سعر_المتر'):
+    if df_input.empty: return 0, "لا توجد بيانات"
+    # تنظيف أولي
+    clean = df_input[(df_input[col] > 100) & (df_input[col] < 150000)].copy()
+    if len(clean) < 3: return 0, "بيانات غير كافية"
+    
+    # خوارزمية IQR لاستبعاد الشواذ
+    Q1 = clean[col].quantile(0.25)
+    Q3 = clean[col].quantile(0.75)
+    IQR = Q3 - Q1
+    lower_bound = Q1 - 1.5 * IQR
+    upper_bound = Q3 + 1.5 * IQR
+    
+    final_df = clean[(clean[col] >= lower_bound) & (clean[col] <= upper_bound)]
+    
+    if final_df.empty: return clean[col].median(), "تشتت عالي (تم استخدام الكل)"
+    
+    return final_df[col].median(), f"تم تحليل {len(final_df)} عقار (بعد التنظيف)"
+
+# --- الاتصال بالكاش ---
 @st.cache_resource(show_spinner="جاري جلب البيانات...", ttl=3600)
 def load_bot():
     try: return data_bot.RealEstateBot()
@@ -31,7 +46,7 @@ if 'bot' not in st.session_state: st.session_state.bot = load_bot()
 df = st.session_state.bot.df if hasattr(st.session_state.bot, 'df') else pd.DataFrame()
 
 # ========================================================
-# 🟢 القائمة الجانبية (نظام التنقل الرئيسي)
+# 🟢 القائمة الجانبية
 # ========================================================
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2642/2642226.png", width=70)
@@ -45,10 +60,10 @@ with st.sidebar:
     st.divider()
 
 # ========================================================
-# 📊 القسم الأول: لوحة البيانات (Dashboard)
+# 📊 القسم الأول: الداشبورد
 # ========================================================
 if app_mode == "📊 لوحة البيانات (Dashboard)":
-    
+    # ... (نفس كود الداشبورد السابق بدون تغيير) ...
     with st.sidebar:
         st.subheader("🔍 فلتر البيانات")
         if st.button("🔄 تحديث البيانات", use_container_width=True):
@@ -69,7 +84,6 @@ if app_mode == "📊 لوحة البيانات (Dashboard)":
         st.divider()
         c_sold = len(filtered_df[filtered_df['Data_Category'] == 'صفقات (Sold)'])
         c_ask = len(filtered_df[filtered_df['Data_Category'] == 'عروض (Ask)'])
-        st.markdown(f"**📌 ملخص {selected_dist}:**")
         st.write(f"🟢 صفقات: {c_sold}")
         st.write(f"🔵 عروض: {c_ask}")
 
@@ -79,12 +93,12 @@ if app_mode == "📊 لوحة البيانات (Dashboard)":
         with st.expander("📂 تفاصيل الملفات والمصادر", expanded=False):
             file_stats = filtered_df['Source_File'].value_counts().reset_index()
             file_stats.columns = ['اسم الملف', 'عدد العقارات']
-            st.dataframe(file_stats, use_container_width=True, column_config={"عدد العقارات": st.column_config.ProgressColumn(format="%d", max_value=int(file_stats['عدد العقارات'].max()))})
+            st.dataframe(file_stats, use_container_width=True)
 
     if filtered_df.empty:
         st.info("لا توجد بيانات مطابقة.")
     else:
-        tab_deals, tab_offers = st.tabs(["💰 سجل الصفقات (Sold)", "🏷️ عروض السوق (Offers)"])
+        tab_deals, tab_offers = st.tabs(["💰 سجل الصفقات", "🏷️ العروض"])
         cols_show = ['Source_File', 'اسم_المطور', 'الحي', 'السعر', 'المساحة', 'سعر_المتر', 'نوع_العقار', 'الحالة', 'عدد_الغرف']
         cols_map = {'Source_File': 'الملف', 'اسم_المطور': 'المطور', 'سعر_المتر': 'المتر', 'نوع_العقار': 'النوع'}
         valid_cols = [c for c in cols_show if c in filtered_df.columns]
@@ -100,14 +114,21 @@ if app_mode == "📊 لوحة البيانات (Dashboard)":
             else: st.warning("لا توجد عروض.")
 
 # ========================================================
-# 🏗️ القسم الثاني: حاسبة التكاليف (Calculator)
+# 🏗️ القسم الثاني: حاسبة التكاليف + تحليل السوق
 # ========================================================
 elif app_mode == "🏗️ حاسبة التكاليف (Calculator)":
     
-    st.title("🏗️ حاسبة تكاليف التطوير المتقدمة")
+    st.title("🏗️ حاسبة التكاليف المربوطة بالسوق")
     
     # --- سايدبار الحاسبة ---
     with st.sidebar:
+        # 0. تحديد الحي (مهم جداً للربط بالسوق)
+        st.markdown("### 📍 موقع المشروع")
+        districts_list = sorted(df['الحي'].unique()) if 'الحي' in df.columns else []
+        calc_dist = st.selectbox("اختر الحي للتحليل:", districts_list)
+        
+        st.divider()
+
         st.subheader("1️⃣ الأرض")
         land_area = st.number_input("مساحة الأرض (م²)", value=375, step=25)
         land_price = st.number_input("سعر المتر (ريال)", value=3500, step=50)
@@ -134,43 +155,30 @@ elif app_mode == "🏗️ حاسبة التكاليف (Calculator)":
         st.divider()
 
         st.subheader("4️⃣ التسويق والاستراتيجية")
-        marketing_pct = st.number_input("نسبة التسويق والعمولات (%)", value=2.5, help="تحسب كنسبة من إجمالي تكلفة المشروع كميزانية تقديرية")
+        marketing_pct = st.number_input("نسبة التسويق والعمولات (%)", value=2.5)
         is_offplan = st.checkbox("بيع على الخارطة (Off-plan)?", value=False)
         
         wafi_fees = 0
         if is_offplan:
             wafi_fees = st.number_input("رسوم وافي وأمين الحساب", value=50000)
             
-    # --- العمليات الحسابية ---
-    
-    # 1. الأرض
+    # --- الحسابات ---
     base_land_cost = land_area * land_price
     land_adds = base_land_cost * ((tax_pct + comm_pct) / 100)
     total_land_cost = base_land_cost + land_adds
 
-    # 2. البناء
     total_construction_cost = bua * turnkey_price
     total_bone_cost = bua * bone_price
-    
-    # 3. الرسوم والخدمات
     malath_insurance = total_bone_cost * 0.01
     services_total = num_units * services_cost_per_unit
     
-    # 4. الطوارئ (2%)
     sub_total_hard = total_land_cost + total_construction_cost + services_total + permits_cost + design_fees + wafi_fees
     contingency_val = sub_total_hard * 0.02 
-    
-    # 5. التسويق (الجديد) 📣
-    # نحسبها كنسبة من (التكاليف المباشرة + الطوارئ) لتكوين ميزانية
     marketing_budget = (sub_total_hard + contingency_val) * (marketing_pct / 100)
-    
-    # 6. الإجمالي النهائي
     grand_total_cost = sub_total_hard + contingency_val + marketing_budget
-    
     cost_per_built_meter = grand_total_cost / bua
 
     # --- عرض النتائج ---
-
     if is_offplan: st.warning("⚠️ وضع التحليل: **بيع على الخارطة**")
     else: st.success("✅ وضع التحليل: **تطوير تقليدي**")
 
@@ -181,40 +189,97 @@ elif app_mode == "🏗️ حاسبة التكاليف (Calculator)":
 
     st.divider()
 
+    # الجدول والرسم
     col_table, col_chart = st.columns([1.5, 1])
-    
     with col_table:
         st.subheader("📑 تفاصيل الفاتورة")
-        
         breakdown = [
             {"البند": "قيمة الأرض (مع الضريبة والسعي)", "التكلفة": total_land_cost},
             {"البند": "تكلفة البناء (تسليم مفتاح)", "التكلفة": total_construction_cost},
             {"البند": "تأمين ملاذ (1% من العظم)", "التكلفة": malath_insurance},
             {"البند": f"خدمات ({num_units} عدادات)", "التكلفة": services_total},
             {"البند": "رخص + تصميم وإشراف", "التكلفة": permits_cost + design_fees},
-            {"البند": f"تسويق وعمولات بيع ({marketing_pct}%)", "التكلفة": marketing_budget}, # البند الجديد
+            {"البند": f"تسويق وعمولات بيع ({marketing_pct}%)", "التكلفة": marketing_budget},
             {"البند": "احتياطي طوارئ (2%)", "التكلفة": contingency_val},
         ]
-        if is_offplan:
-            breakdown.append({"البند": "رسوم وافي وأمين حساب", "التكلفة": wafi_fees})
-            
+        if is_offplan: breakdown.append({"البند": "رسوم وافي وأمين حساب", "التكلفة": wafi_fees})
         df_cost = pd.DataFrame(breakdown)
         df_cost['الوزن'] = (df_cost['التكلفة'] / grand_total_cost)
-        
-        st.dataframe(
-            df_cost,
-            use_container_width=True,
-            column_config={
-                "التكلفة": st.column_config.NumberColumn(format="%d ريال"),
-                "الوزن": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=1)
-            }
-        )
+        st.dataframe(df_cost, use_container_width=True, column_config={"التكلفة": st.column_config.NumberColumn(format="%d ريال"), "الوزن": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=1)})
         
     with col_chart:
         st.subheader("🍰 توزيع التكاليف")
         chart_data = df_cost.set_index("البند")
         st.bar_chart(chart_data['التكلفة'])
 
-    st.divider()
-    st.info(f"💡 تم رصد ميزانية تسويقية قدرها **{marketing_budget:,.0f} ريال**. هذا المبلغ يغطي عادةً عمولات الوسطاء والحملات الإعلانية عند بدء البيع.")
+    # ==========================================================
+    # 🧠 تحليل السوق الذكي (The New Market Insight Section)
+    # ==========================================================
     
+    st.markdown("---")
+    st.header(f"📊 مؤشرات السوق الحقيقية: {calc_dist}")
+    
+    # فلترة بيانات الحي المحدد
+    market_df = df[df['الحي'] == calc_dist]
+    
+    if market_df.empty:
+        st.warning(f"عذراً، لا توجد بيانات مسجلة في النظام لحي {calc_dist} للمقارنة.")
+    else:
+        # 1. تحليل الأراضي (من الصفقات فقط)
+        sold_lands = market_df[
+            (market_df['Data_Category'] == 'صفقات (Sold)') & 
+            (market_df['نوع_العقار'].str.contains('أرض', na=False))
+        ]
+        avg_land_market, land_msg = get_clean_stats(sold_lands)
+
+        # 2. تحليل الشقق (من العروض فقط)
+        ask_apts = market_df[
+            (market_df['Data_Category'] == 'عروض (Ask)') & 
+            (market_df['نوع_العقار'].str.contains('شقة', na=False))
+        ]
+        avg_apt_market, apt_msg = get_clean_stats(ask_apts)
+
+        # عرض الكروت
+        col_m1, col_m2 = st.columns(2)
+        
+        with col_m1:
+            st.markdown(f"""
+            <div class="market-card">
+                <h3>🏷️ متوسط سعر متر الأرض (صفقات)</h3>
+                <h2 style="color:#2c3e50;">{avg_land_market:,.0f} ريال</h2>
+                <small>{land_msg}</small>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # مقارنة مدخلاتك بالسوق
+            if avg_land_market > 0:
+                diff_land = ((land_price - avg_land_market) / avg_land_market) * 100
+                if diff_land > 10:
+                    st.error(f"⚠️ انتبه: سعرك المدخل ({land_price}) أعلى من متوسط الصفقات بـ {diff_land:.1f}%")
+                elif diff_land < -10:
+                    st.success(f"🔥 لقطة: سعرك أقل من متوسط الصفقات بـ {abs(diff_land):.1f}%")
+                else:
+                    st.info("✅ سعرك منطقي وموافق لمتوسط السوق.")
+
+        with col_m2:
+            st.markdown(f"""
+            <div class="market-card" style="border-top-color: #9b59b6;">
+                <h3>🏢 متوسط عرض الشقق (عروض)</h3>
+                <h2 style="color:#8e44ad;">{avg_apt_market:,.0f} ريال</h2>
+                <small>{apt_msg}</small>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # مقارنة تكلفتك بسعر السوق للشقق
+            if avg_apt_market > 0:
+                # نحسب تكلفة المتر الصافية للمشروع (شامل الأرض والبناء)
+                proj_cost_sqm = cost_per_built_meter
+                potential_profit_margin = ((avg_apt_market - proj_cost_sqm) / proj_cost_sqm) * 100
+                
+                st.write(f"تكلفة مشروعك للمتر: **{proj_cost_sqm:,.0f} ريال**")
+                if potential_profit_margin > 20:
+                    st.success(f"🚀 فرصة ممتازة: هامش الربح المتوقع (مقارنة بالسوق) يصل إلى {potential_profit_margin:.1f}%")
+                elif potential_profit_margin > 0:
+                    st.warning(f"⚠️ ربح محدود: الهامش المتوقع {potential_profit_margin:.1f}% (المنافسة قوية)")
+                else:
+                    st.error(f"⛔ خطر: تكلفتك أعلى من سعر بيع السوق الحالي!")
