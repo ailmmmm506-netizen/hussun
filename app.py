@@ -9,27 +9,39 @@ st.set_page_config(page_title="المطور العقاري الذكي", layout="
 st.markdown("""
 <style>
     /* تنسيق الكروت */
-    .market-card { background-color: #e8f4f8; padding: 20px; border-radius: 10px; border-top: 5px solid #3498db; margin-top: 20px; }
+    .market-card { 
+        background-color: #ffffff; 
+        padding: 15px; 
+        border-radius: 10px; 
+        border-top: 5px solid #3498db; 
+        margin-bottom: 15px; 
+        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        text-align: center;
+    }
+    .market-card h3 { font-size: 16px; color: #7f8c8d; margin-bottom: 5px; }
+    .market-card h2 { font-size: 24px; font-weight: bold; color: #2c3e50; margin: 0; }
+    .market-card small { font-size: 12px; color: #95a5a6; }
+    
     .cost-card { background-color: #f8f9fa; padding: 20px; border-radius: 10px; border-left: 5px solid #2ecc71; margin-bottom: 10px; }
     [data-testid="stSidebar"] { background-color: #f8f9fa; border-left: 1px solid #ddd; }
     .stDataFrame { border: 1px solid #eee; border-radius: 5px; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- دالة الإحصاء المحدثة (أكثر مرونة) ---
+# --- دالة الإحصاء المحدثة ---
 def get_clean_stats(df_input, col='سعر_المتر'):
     if df_input.empty: return 0, "لا توجد بيانات", df_input
     
-    # تنظيف القيم الصفرية أو غير المنطقية فقط
+    # تنظيف القيم الشاذة
     clean = df_input[(df_input[col] > 100) & (df_input[col] < 200000)].copy()
     
-    if clean.empty: return 0, "القيم خارج النطاق المنطقي", clean
+    if clean.empty: return 0, "القيم خارج النطاق", clean
     
-    # إذا البيانات قليلة (أقل من 5)، خذ المتوسط مباشرة بدون عزل الشواذ
+    # إذا البيانات قليلة
     if len(clean) < 5:
-        return clean[col].median(), f"تم حساب {len(clean)} عقار (عدد قليل)", clean
+        return clean[col].median(), f"عدد ({len(clean)})", clean
     
-    # إذا البيانات كثيرة، نستخدم IQR لاستبعاد القيم الشاذة جداً
+    # IQR
     Q1 = clean[col].quantile(0.25)
     Q3 = clean[col].quantile(0.75)
     IQR = Q3 - Q1
@@ -39,10 +51,9 @@ def get_clean_stats(df_input, col='سعر_المتر'):
     final_df = clean[(clean[col] >= lower_bound) & (clean[col] <= upper_bound)]
     
     if final_df.empty: 
-        # لو التنظيف مسح كل شيء، نرجع للبيانات الخام
-        return clean[col].median(), f"تشتت عالي ({len(clean)} عقار)", clean
+        return clean[col].median(), f"عدد ({len(clean)})", clean
     
-    return final_df[col].median(), f"متوسط {len(final_df)} عقار (بعد استبعاد الشواذ)", final_df
+    return final_df[col].median(), f"عدد ({len(final_df)})", final_df
 
 # --- الاتصال بالكاش ---
 @st.cache_resource(show_spinner="جاري جلب البيانات...", ttl=3600)
@@ -71,7 +82,7 @@ with st.sidebar:
 # 📊 القسم الأول: الداشبورد
 # ========================================================
 if app_mode == "📊 لوحة البيانات (Dashboard)":
-    # ... (نفس كود الداشبورد السابق) ...
+    # ... (نفس كود الداشبورد السابق تماماً) ...
     with st.sidebar:
         st.subheader("🔍 فلتر البيانات")
         if st.button("🔄 تحديث البيانات", use_container_width=True):
@@ -122,7 +133,7 @@ if app_mode == "📊 لوحة البيانات (Dashboard)":
             else: st.warning("لا توجد عروض.")
 
 # ========================================================
-# 🏗️ القسم الثاني: حاسبة التكاليف + تحليل السوق
+# 🏗️ القسم الثاني: حاسبة التكاليف + تحليل السوق الشامل
 # ========================================================
 elif app_mode == "🏗️ حاسبة التكاليف (Calculator)":
     
@@ -130,12 +141,9 @@ elif app_mode == "🏗️ حاسبة التكاليف (Calculator)":
     
     # --- سايدبار الحاسبة ---
     with st.sidebar:
-        # 0. تحديد الحي
         st.markdown("### 📍 موقع المشروع")
         districts_list = sorted(df['الحي'].unique()) if 'الحي' in df.columns else []
-        # تحديد الحي الافتراضي إذا وجد
-        default_ix = 0
-        calc_dist = st.selectbox("اختر الحي للتحليل:", districts_list, index=default_ix)
+        calc_dist = st.selectbox("اختر الحي للتحليل:", districts_list)
         
         st.divider()
 
@@ -156,23 +164,19 @@ elif app_mode == "🏗️ حاسبة التكاليف (Calculator)":
         
         st.divider()
 
-        st.subheader("3️⃣ الخدمات والرخص")
+        st.subheader("3️⃣ الخدمات والتسويق")
         num_units = st.number_input("عدد الوحدات", value=4)
         services_cost_per_unit = st.number_input("تكلفة الخدمات/وحدة", value=15000)
-        permits_cost = st.number_input("إجمالي الرخص والتصاريح", value=25000)
-        design_fees = st.number_input("تصميم وإشراف هندسي", value=40000)
-
-        st.divider()
-
-        st.subheader("4️⃣ التسويق والاستراتيجية")
-        marketing_pct = st.number_input("نسبة التسويق والعمولات (%)", value=2.5)
-        is_offplan = st.checkbox("بيع على الخارطة (Off-plan)?", value=False)
+        permits_cost = st.number_input("إجمالي الرخص", value=25000)
+        design_fees = st.number_input("تصميم وإشراف", value=40000)
+        marketing_pct = st.number_input("نسبة التسويق (%)", value=2.5)
         
+        is_offplan = st.checkbox("بيع على الخارطة (Off-plan)?", value=False)
         wafi_fees = 0
         if is_offplan:
             wafi_fees = st.number_input("رسوم وافي وأمين الحساب", value=50000)
             
-    # --- الحسابات ---
+    # --- الحسابات (نفس السابق) ---
     base_land_cost = land_area * land_price
     land_adds = base_land_cost * ((tax_pct + comm_pct) / 100)
     total_land_cost = base_land_cost + land_adds
@@ -188,7 +192,7 @@ elif app_mode == "🏗️ حاسبة التكاليف (Calculator)":
     grand_total_cost = sub_total_hard + contingency_val + marketing_budget
     cost_per_built_meter = grand_total_cost / bua
 
-    # --- عرض النتائج ---
+    # --- عرض النتائج العلوية ---
     if is_offplan: st.warning("⚠️ وضع التحليل: **بيع على الخارطة**")
     else: st.success("✅ وضع التحليل: **تطوير تقليدي**")
 
@@ -198,108 +202,124 @@ elif app_mode == "🏗️ حاسبة التكاليف (Calculator)":
     with c3: st.metric("مسطح البناء", f"{bua:,.0f} م²")
 
     st.divider()
-
-    # الجدول والرسم
+    
+    # ... (جدول التفاصيل والرسم البياني - كما هو) ...
     col_table, col_chart = st.columns([1.5, 1])
     with col_table:
         st.subheader("📑 تفاصيل الفاتورة")
         breakdown = [
-            {"البند": "قيمة الأرض (مع الضريبة والسعي)", "التكلفة": total_land_cost},
-            {"البند": "تكلفة البناء (تسليم مفتاح)", "التكلفة": total_construction_cost},
-            {"البند": "تأمين ملاذ (1% من العظم)", "التكلفة": malath_insurance},
-            {"البند": f"خدمات ({num_units} عدادات)", "التكلفة": services_total},
-            {"البند": "رخص + تصميم وإشراف", "التكلفة": permits_cost + design_fees},
-            {"البند": f"تسويق وعمولات بيع ({marketing_pct}%)", "التكلفة": marketing_budget},
-            {"البند": "احتياطي طوارئ (2%)", "التكلفة": contingency_val},
+            {"البند": "قيمة الأرض", "التكلفة": total_land_cost},
+            {"البند": "تكلفة البناء", "التكلفة": total_construction_cost},
+            {"البند": "تأمين ملاذ", "التكلفة": malath_insurance},
+            {"البند": "خدمات", "التكلفة": services_total},
+            {"البند": "رخص وإشراف", "التكلفة": permits_cost + design_fees},
+            {"البند": "تسويق", "التكلفة": marketing_budget},
+            {"البند": "طوارئ", "التكلفة": contingency_val},
         ]
-        if is_offplan: breakdown.append({"البند": "رسوم وافي وأمين حساب", "التكلفة": wafi_fees})
+        if is_offplan: breakdown.append({"البند": "رسوم وافي", "التكلفة": wafi_fees})
         df_cost = pd.DataFrame(breakdown)
         df_cost['الوزن'] = (df_cost['التكلفة'] / grand_total_cost)
-        st.dataframe(df_cost, use_container_width=True, column_config={"التكلفة": st.column_config.NumberColumn(format="%d ريال"), "الوزن": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=1)})
+        st.dataframe(df_cost, use_container_width=True, column_config={"التكلفة": st.column_config.NumberColumn(format="%d"), "الوزن": st.column_config.ProgressColumn(format="%.1f%%")})
         
     with col_chart:
-        st.subheader("🍰 توزيع التكاليف")
-        chart_data = df_cost.set_index("البند")
-        st.bar_chart(chart_data['التكلفة'])
+        st.bar_chart(df_cost.set_index("البند")['التكلفة'])
 
     # ==========================================================
-    # 🧠 تحليل السوق (مع الشفافية الكاملة)
+    # 🧠 تحليل السوق الشامل (The Full Scanner)
     # ==========================================================
     
     st.markdown("---")
-    st.header(f"📊 مؤشرات السوق الحقيقية: {calc_dist}")
+    st.header(f"📊 مسح أسعار العروض في حي {calc_dist}")
     
     market_df = df[df['الحي'] == calc_dist]
     
     if market_df.empty:
-        st.warning(f"عذراً، لا توجد بيانات مسجلة في النظام لحي {calc_dist}.")
+        st.warning(f"لا توجد بيانات مسجلة لحي {calc_dist}.")
     else:
-        # 1. تحليل الأراضي (من الصفقات فقط)
-        sold_lands = market_df[
-            (market_df['Data_Category'] == 'صفقات (Sold)') & 
-            (market_df['نوع_العقار'].str.contains('أرض', na=False))
-        ]
-        # هنا نعيد البيانات المستخدمة (used_data) لنعرضها للمستخدم
-        avg_land_market, land_msg, used_lands = get_clean_stats(sold_lands)
-
-        # 2. تحليل الشقق (من العروض فقط)
-        ask_apts = market_df[
-            (market_df['Data_Category'] == 'عروض (Ask)') & 
-            (market_df['نوع_العقار'].str.contains('شقة', na=False))
-        ]
-        avg_apt_market, apt_msg, used_apts = get_clean_stats(ask_apts)
-
-        # عرض الكروت
-        col_m1, col_m2 = st.columns(2)
+        # 1. فلترة العروض فقط (Offers Only)
+        offers_df = market_df[market_df['Data_Category'] == 'عروض (Ask)']
         
-        with col_m1:
-            st.markdown(f"""
-            <div class="market-card">
-                <h3>🏷️ متوسط سعر متر الأرض (صفقات)</h3>
-                <h2 style="color:#2c3e50;">{avg_land_market:,.0f} ريال</h2>
-                <small>{land_msg}</small>
-            </div>
-            """, unsafe_allow_html=True)
+        if offers_df.empty:
+            st.warning("لا توجد عروض بيع مسجلة في هذا الحي.")
+        else:
+            # 2. حساب المتوسطات الأربعة
+            # أ) متوسط الفلل
+            villa_offers = offers_df[offers_df['نوع_العقار'].str.contains('فيلا', na=False)]
+            avg_villa, msg_villa, df_villa = get_clean_stats(villa_offers)
             
-            # زر الشفافية (Debug)
-            with st.expander("👁️ عرض صفقات الأراضي المستخدمة"):
-                if not used_lands.empty:
-                    st.dataframe(used_lands[['Source_File', 'السعر', 'المساحة', 'سعر_المتر', 'نوع_العقار']], use_container_width=True)
-                else:
-                    st.write("لم يتم العثور على صفقات أراضي مطابقة.")
+            # ب) متوسط الشقق
+            apt_offers = offers_df[offers_df['نوع_العقار'].str.contains('شقة', na=False)]
+            avg_apt, msg_apt, df_apt = get_clean_stats(apt_offers)
+            
+            # ج) متوسط الأدوار
+            floor_offers = offers_df[offers_df['نوع_العقار'].str.contains('دور', na=False)]
+            avg_floor, msg_floor, df_floor = get_clean_stats(floor_offers)
+            
+            # د) المتوسط العام (لكل العروض)
+            avg_all, msg_all, df_all = get_clean_stats(offers_df)
 
-            if avg_land_market > 0:
-                diff_land = ((land_price - avg_land_market) / avg_land_market) * 100
-                if diff_land > 10:
-                    st.error(f"⚠️ سعرك ({land_price}) أعلى من السوق بـ {diff_land:.1f}%")
-                elif diff_land < -10:
-                    st.success(f"🔥 سعرك أقل من السوق بـ {abs(diff_land):.1f}%")
-                else:
-                    st.info("✅ سعرك منطقي.")
+            # 3. عرض النتائج في شبكة (Grid)
+            st.caption("الأسعار أدناه تمثل متوسط سعر العرض للمتر المربع (شامل الأرض والبناء) حسب ملفات العروض المتوفرة.")
+            
+            col_res1, col_res2, col_res3, col_res4 = st.columns(4)
+            
+            with col_res1:
+                st.markdown(f"""
+                <div class="market-card">
+                    <h3>🏠 متوسط الفلل</h3>
+                    <h2>{avg_villa:,.0f}</h2>
+                    <small>{msg_villa}</small>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col_res2:
+                st.markdown(f"""
+                <div class="market-card">
+                    <h3>🏢 متوسط الشقق</h3>
+                    <h2>{avg_apt:,.0f}</h2>
+                    <small>{msg_apt}</small>
+                </div>
+                """, unsafe_allow_html=True)
+                
+            with col_res3:
+                st.markdown(f"""
+                <div class="market-card">
+                    <h3>🏘️ متوسط الأدوار</h3>
+                    <h2>{avg_floor:,.0f}</h2>
+                    <small>{msg_floor}</small>
+                </div>
+                """, unsafe_allow_html=True)
 
-        with col_m2:
-            st.markdown(f"""
-            <div class="market-card" style="border-top-color: #9b59b6;">
-                <h3>🏢 متوسط عرض الشقق (عروض)</h3>
-                <h2 style="color:#8e44ad;">{avg_apt_market:,.0f} ريال</h2>
-                <small>{apt_msg}</small>
-            </div>
-            """, unsafe_allow_html=True)
+            with col_res4:
+                st.markdown(f"""
+                <div class="market-card" style="border-top-color: #f1c40f;">
+                    <h3>📈 المتوسط العام</h3>
+                    <h2>{avg_all:,.0f}</h2>
+                    <small>{msg_all}</small>
+                </div>
+                """, unsafe_allow_html=True)
             
-            # زر الشفافية (Debug)
-            with st.expander("👁️ عرض عروض الشقق المستخدمة"):
-                if not used_apts.empty:
-                    st.dataframe(used_apts[['Source_File', 'السعر', 'المساحة', 'سعر_المتر', 'نوع_العقار']], use_container_width=True)
-                else:
-                    st.write("لم يتم العثور على عروض شقق مطابقة.")
+            # 4. مقارنة تكلفتك مع السوق
+            st.divider()
+            st.subheader("💡 تحليل الجدوى (مقارنة بالسوق)")
             
-            if avg_apt_market > 0:
-                proj_cost_sqm = cost_per_built_meter
-                potential_profit_margin = ((avg_apt_market - proj_cost_sqm) / proj_cost_sqm) * 100
-                st.write(f"تكلفتك للمتر: **{proj_cost_sqm:,.0f} ريال**")
-                if potential_profit_margin > 20:
-                    st.success(f"🚀 هامش ربح سوقي: {potential_profit_margin:.1f}%")
-                elif potential_profit_margin > 0:
-                    st.warning(f"⚠️ هامش ربح سوقي: {potential_profit_margin:.1f}%")
-                else:
-                    st.error(f"⛔ تكلفتك أعلى من سعر السوق!")
+            proj_cost = cost_per_built_meter
+            
+            # دالة مساعدة لرسم شريط المقارنة
+            def show_comparison(label, market_price):
+                if market_price > 0:
+                    diff = ((market_price - proj_cost) / proj_cost) * 100
+                    color = "green" if diff > 20 else "orange" if diff > 0 else "red"
+                    icon = "🚀" if diff > 20 else "⚠️" if diff > 0 else "⛔"
+                    st.write(f"**مقارنة مع {label}:**")
+                    st.progress(min(max((diff + 50)/100, 0.0), 1.0))
+                    st.caption(f"{icon} الهامش المتوقع: **{diff:.1f}%** (السوق: {market_price:,.0f} - تكلفتك: {proj_cost:,.0f})")
+
+            c_comp1, c_comp2 = st.columns(2)
+            with c_comp1:
+                show_comparison("الشقق", avg_apt)
+                show_comparison("الأدوار", avg_floor)
+            with c_comp2:
+                show_comparison("الفلل", avg_villa)
+                show_comparison("المتوسط العام", avg_all)
+                
